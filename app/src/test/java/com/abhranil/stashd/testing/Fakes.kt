@@ -34,7 +34,12 @@ class ScriptedDrive : DriveRepository {
         return DrivePage(p[i], if (i + 1 < p.size) "p${i + 1}" else null, i in incompletePages[folderId].orEmpty())
     }
 
-    override suspend fun fileMetadata(fileId: String, resourceKey: String?): DriveItem = throw NotImplementedError()
+    val metadata = HashMap<String, DriveItem>()
+    val metadataCalls = mutableListOf<Pair<String, String?>>()
+    override suspend fun fileMetadata(fileId: String, resourceKey: String?): DriveItem {
+        metadataCalls += fileId to resourceKey
+        return metadata[fileId] ?: throw com.abhranil.stashd.data.drive.DriveError.NotFound(fileId)
+    }
     override suspend fun openDownload(fileId: String, resourceKey: String?, fromByte: Long): DriveDownload = throw NotImplementedError()
 }
 
