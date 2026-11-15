@@ -22,6 +22,8 @@ class ScriptedDrive : DriveRepository {
     val calls = mutableListOf<Call>()
     val pages = HashMap<String, List<List<DriveItem>>>()
     val failures = HashMap<String, Exception>()
+    /** folderId -> page indexes that come back with incompleteSearch=true. */
+    val incompletePages = HashMap<String, Set<Int>>()
     var resolved: (DriveLink) -> DriveItem = { folder(it.id, it.resourceKey) }
 
     override suspend fun resolve(link: DriveLink) = resolved(link)
@@ -31,7 +33,7 @@ class ScriptedDrive : DriveRepository {
         failures[folderId]?.let { throw it }
         val p = pages[folderId] ?: listOf(emptyList())
         val i = pageToken?.removePrefix("p")?.toInt() ?: 0
-        return DrivePage(p[i], if (i + 1 < p.size) "p${i + 1}" else null)
+        return DrivePage(p[i], if (i + 1 < p.size) "p${i + 1}" else null, i in incompletePages[folderId].orEmpty())
     }
 
     override fun walk(rootFolderId: String, resourceKey: String?): Flow<WalkProgress> = throw NotImplementedError()

@@ -50,8 +50,16 @@ interface DriveDownload : AutoCloseable {
     val source: okio.BufferedSource
 }
 
-/** One files.list page. */
-data class DrivePage(val items: List<DriveItem>, val nextPageToken: String?)
+/** One files.list page. [incompleteSearch] is Drive's own "this result may be missing items" flag. */
+data class DrivePage(val items: List<DriveItem>, val nextPageToken: String?, val incompleteSearch: Boolean = false)
+
+/**
+ * A folder's direct children gathered over one or more pages. Complete only when no page token remains
+ * AND Drive never reported incompleteSearch. Incomplete listings must not be cached or shown as complete.
+ */
+data class FolderListing(val items: List<DriveItem>, val nextPageToken: String?, val incompleteSearch: Boolean) {
+    val isComplete: Boolean get() = nextPageToken == null && !incompleteSearch
+}
 
 sealed class DriveError(message: String) : Exception(message) {
     class NotFound(val id: String) : DriveError("Not found, or this account has no access to it")

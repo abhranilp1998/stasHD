@@ -13,6 +13,7 @@ import com.abhranil.stashd.data.drive.DriveError
 import com.abhranil.stashd.data.drive.DriveItem
 import com.abhranil.stashd.data.drive.DriveRepository
 import com.abhranil.stashd.data.drive.FolderCache
+import com.abhranil.stashd.data.drive.FolderListing
 import com.abhranil.stashd.data.settings.Settings
 import com.abhranil.stashd.data.settings.SettingsStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -37,8 +38,18 @@ data class Crumb(val id: String, val name: String, val resourceKey: String?, val
 
 sealed interface FolderContent {
     data class Loading(val itemsSoFar: Int = 0) : FolderContent
-    data class Loaded(val items: List<DriveItem>, val fromCache: Boolean = false) : FolderContent
+    data class Loaded(val items: List<DriveItem>, val fromCache: Boolean = false, val incomplete: Incomplete? = null) : FolderContent
     data class Error(val message: String, val needsConsent: Boolean = false, val consentIntent: PendingIntent? = null) : FolderContent
+}
+
+/** Why a listing is not complete. Shown to the user; never cached as complete. */
+data class Incomplete(val reason: Reason, val nextPageToken: String?) {
+    enum class Reason {
+        /** Stopped after [DriveRepository.MAX_PAGES] pages with a page token left; "Continue" resumes from it. */
+        PAGE_LIMIT,
+        /** Drive set incompleteSearch=true; "Retry" lists again. */
+        DRIVE_INCOMPLETE_SEARCH,
+    }
 }
 
 /** A picked file or folder, remembered with where it was picked so it survives navigating elsewhere. */
@@ -141,24 +152,41 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    private fun load(crumb: Crumb) {
+    /** Resume an incomplete listing from its page token (keeps what was already fetched). */
+    fun continueListing() {
+        val s = _state.value
+        val c = s.content as? FolderContent.Loaded ?: return
+        val token = c.incomplete?.nextPageToken ?: return retry()
+        load(s.current, resume = c.items to token)
+    }
+
+    private fun load(crumb: Crumb, resume: Pair<List<DriveItem>, String>? = null) {
         loadJob?.cancel()
-        listed[crumb.id]?.let { setContent(crumb, FolderContent.Loaded(it)); return }
-        setContent(crumb, FolderContent.Loading())
+        if (resume == null) listed[crumb.id]?.let { setContent(crumb, FolderContent.Loaded(it)); return }
+        setContent(crumb, FolderContent.Loading(resume?.first?.size ?: 0))
         loadJob = viewModelScope.launch {
             try {
-                val items = ArrayList<DriveItem>()
-                var token: String? = null
+                val items = ArrayList<DriveItem>(resume?.first.orEmpty())
+                var token: String? = resume?.second
+                var incompleteSearch = false
                 var pages = 0
                 do {
                     val page = drive.listPage(crumb.id, crumb.resourceKey, token)
                     items += page.items
+                    incompleteSearch = incompleteSearch || page.incompleteSearch
                     token = page.nextPageToken
                     if (token != null) setContent(crumb, FolderContent.Loading(items.size))
                 } while (token != null && ++pages < DriveRepository.MAX_PAGES)
-                listed[crumb.id] = items
-                setContent(crumb, FolderContent.Loaded(items))
-                runCatching { cache.storeListing(null, crumb.id, crumb.resourceKey, items) }
+                val listing = FolderListing(items, token, incompleteSearch)
+                if (listing.isComplete) {
+                    listed[crumb.id] = items
+                    setContent(crumb, FolderContent.Loaded(items))
+                    runCatching { cache.storeListing(null, crumb.id, crumb.resourceKey, items) }
+                } else {
+                    // Visible, not cached, not remembered as complete.
+                    val reason = if (token != null) Incomplete.Reason.PAGE_LIMIT else Incomplete.Reason.DRIVE_INCOMPLETE_SEARCH
+                    setContent(crumb, FolderContent.Loaded(items, incomplete = Incomplete(reason, token)))
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: NeedsConsentException) {

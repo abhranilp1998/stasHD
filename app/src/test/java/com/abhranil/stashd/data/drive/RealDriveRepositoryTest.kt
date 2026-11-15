@@ -47,7 +47,9 @@ class RealDriveRepositoryTest {
             {"id":"f2","name":"01 Intro.flac","mimeType":"audio/flac","size":"41234567","md5Checksum":"abc123","modifiedTime":"2024-10-04T10:00:00.000Z"}]}"""))
         server.enqueue(json("""{"files":[{"id":"f3","name":"02 Song.flac","mimeType":"audio/flac","size":"5"}]}"""))
 
-        val items = repo.listChildren(folderId, "0-rootKey")
+        val listing = repo.listChildren(folderId, "0-rootKey")
+        assertTrue(listing.isComplete)
+        val items = listing.items
 
         assertEquals(listOf(childId, "f2", "f3"), items.map { it.id })
         assertEquals(41_234_567L, items[1].size)
@@ -76,14 +78,14 @@ class RealDriveRepositoryTest {
 
     @Test fun noResourceKeyHeaderWhenItemHasNoKey() = runTest {
         server.enqueue(json("""{"files":[]}"""))
-        assertEquals(emptyList<DriveItem>(), repo.listChildren(folderId, null))
+        assertEquals(emptyList<DriveItem>(), repo.listChildren(folderId, null).items)
         assertNull(server.takeRequest().rk)
     }
 
     @Test fun childFolderIsListedWithItsOwnResourceKey() = runTest {
         server.enqueue(json("""{"files":[{"id":"$childId","name":"Disc 1","mimeType":"application/vnd.google-apps.folder","resourceKey":"0-childKey"}]}"""))
         server.enqueue(json("""{"files":[]}"""))
-        val child = repo.listChildren(folderId, "0-rootKey").single()
+        val child = repo.listChildren(folderId, "0-rootKey").items.single()
         repo.listChildren(child.id, child.resourceKey)
         server.takeRequest()
         val second = server.takeRequest()
@@ -105,7 +107,7 @@ class RealDriveRepositoryTest {
     @Test fun shortcutKeepsOwnIdentityAndCarriesTargetResourceKey() = runTest {
         server.enqueue(json("""{"files":[{"id":"sc1","name":"Shortcut to Album","mimeType":"application/vnd.google-apps.shortcut",
             "shortcutDetails":{"targetId":"$childId","targetMimeType":"application/vnd.google-apps.folder","targetResourceKey":"0-targetKey"}}]}"""))
-        val item = repo.listChildren(folderId, null).single()
+        val item = repo.listChildren(folderId, null).items.single()
         assertEquals("sc1", item.id)
         assertEquals(childId, item.targetId)
         assertTrue(item.isFolder)
@@ -152,6 +154,25 @@ class RealDriveRepositoryTest {
     @Test fun rejectsIdsThatCouldInjectIntoQuery() = runTest {
         try { repo.listChildren("x' or name contains '", null); fail() } catch (_: DriveError.BadRequest) {}
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun incompleteSearchIsReportedNotDropped() = runTest {
+        server.enqueue(json("""{"incompleteSearch":true,"files":[{"id":"f1","name":"a","mimeType":"audio/flac"}]}"""))
+        val listing = repo.listChildren(folderId, null)
+        assertTrue(listing.incompleteSearch)
+        assertEquals(false, listing.isComplete)
+        assertEquals(1, listing.items.size)
+    }
+
+    @Test fun pageCapLeavesTokenAndIsIncomplete() = runTest {
+        repeat(3) { i -> server.enqueue(json("""{"nextPageToken":"T${i + 1}","files":[{"id":"f$i","name":"a","mimeType":"audio/flac"}]}""")) }
+        val listing = repo.listChildren(folderId, null, maxPages = 2)
+        assertEquals(2, server.requestCount)
+        assertEquals("T2", listing.nextPageToken)
+        assertEquals(false, listing.isComplete)
+        val rest = repo.listChildren(folderId, null, pageToken = listing.nextPageToken, maxPages = 1)
+        assertEquals("T2", server.let { it.takeRequest(); it.takeRequest(); it.takeRequest().requestUrl!!.queryParameter("pageToken") })
+        assertEquals(listOf("f2"), rest.items.map { it.id })
     }
 
     @Test fun resourceKeyHeaderFormat() {

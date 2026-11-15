@@ -180,6 +180,26 @@ private fun FolderList(c: FolderContent.Loaded, state: BrowserUiState, vm: Brows
     val covered = state.coveringFolder != null
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
         if (c.fromCache) item { PlaceholderNote("Offline: showing the last saved list for this folder.", Modifier.padding(8.dp)) }
+        c.incomplete?.let { inc ->
+            item(key = "incomplete") {
+                Row(
+                    Modifier.fillMaxWidth().padding(8.dp)
+                        .background(StashdThemeExt.colors.warningContainer, MaterialTheme.shapes.medium)
+                        .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        when (inc.reason) {
+                            Incomplete.Reason.PAGE_LIMIT -> "Listing incomplete: showing the first ${c.items.size} items. More remain."
+                            Incomplete.Reason.DRIVE_INCOMPLETE_SEARCH -> "Listing incomplete: Drive says some items may be missing."
+                        },
+                        style = MaterialTheme.typography.labelMedium, color = StashdThemeExt.colors.warning, modifier = Modifier.weight(1f),
+                    )
+                    if (inc.nextPageToken != null) TextButton(onClick = vm::continueListing) { Text("Continue") }
+                    else TextButton(onClick = vm::retry) { Text("Retry") }
+                }
+            }
+        }
         items(c.items, key = DriveItem::id) { item ->
             val on = covered || item.id in state.selected
             Row(

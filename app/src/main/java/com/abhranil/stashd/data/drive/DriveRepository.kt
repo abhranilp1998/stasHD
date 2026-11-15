@@ -13,17 +13,22 @@ interface DriveRepository {
     /** One files.list page of a folder's direct children; pass the previous page's token. */
     suspend fun listPage(folderId: String, resourceKey: String?, pageToken: String? = null): DrivePage
 
-    /** All direct children of a folder (loops [listPage] until there is no nextPageToken). */
-    suspend fun listChildren(folderId: String, resourceKey: String?): List<DriveItem> {
+    /**
+     * Direct children, following page tokens for up to [maxPages] pages starting at [pageToken].
+     * Never silently truncates: if a token remains or Drive flags incompleteSearch, the result says so.
+     */
+    suspend fun listChildren(folderId: String, resourceKey: String?, pageToken: String? = null, maxPages: Int = MAX_PAGES): FolderListing {
         val all = ArrayList<DriveItem>()
-        var token: String? = null
+        var token = pageToken
+        var incomplete = false
         var pages = 0
         do {
             val page = listPage(folderId, resourceKey, token)
             all += page.items
+            incomplete = incomplete || page.incompleteSearch
             token = page.nextPageToken
-        } while (token != null && ++pages < MAX_PAGES)
-        return all
+        } while (token != null && ++pages < maxPages)
+        return FolderListing(all, token, incomplete)
     }
 
     /** Recursive BFS walk of a folder; caches the tree in Room and emits progress. */
@@ -33,7 +38,7 @@ interface DriveRepository {
     suspend fun openDownload(fileId: String, resourceKey: String?, fromByte: Long): DriveDownload
 
     companion object {
-        /** 1000 items per page → 200k children before we stop; a guard against a looping token. */
+        /** Pages fetched per run (1000 items each). Hitting it yields an explicit incomplete listing the user can continue. */
         const val MAX_PAGES = 200
     }
 }

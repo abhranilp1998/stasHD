@@ -65,7 +65,7 @@ class RealDriveRepository @Inject constructor(
             .build()
         return get(url, ResourceKeys.header(folderId to resourceKey), folderId) { body ->
             val page = json.decodeFromString<FileListJson>(body)
-            DrivePage(page.files.map { it.toItem() }, page.nextPageToken?.takeIf { it.isNotBlank() })
+            DrivePage(page.files.map { it.toItem() }, page.nextPageToken?.takeIf { it.isNotBlank() }, page.incompleteSearch)
         }
     }
 
