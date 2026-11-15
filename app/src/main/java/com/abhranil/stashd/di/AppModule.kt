@@ -13,6 +13,8 @@ import com.abhranil.stashd.data.db.DriveRootDao
 import com.abhranil.stashd.data.db.StashdDatabase
 import com.abhranil.stashd.data.drive.DriveRepository
 import com.abhranil.stashd.data.drive.DriveApiConfig
+import com.abhranil.stashd.data.drive.DriveCache
+import com.abhranil.stashd.data.drive.FolderCache
 import com.abhranil.stashd.data.drive.DriveMode
 import com.abhranil.stashd.data.drive.FakeDriveRepository
 import com.abhranil.stashd.data.drive.RealDriveRepository
@@ -77,4 +79,5 @@ object AppModule {
 abstract class BindingsModule {
     @Binds abstract fun tokenProvider(impl: GoogleTokenProvider): TokenProvider
     @Binds abstract fun driveAuthorizer(impl: GoogleTokenProvider): DriveAuthorizer
+    @Binds abstract fun folderCache(impl: DriveCache): FolderCache
 }

@@ -5,16 +5,22 @@ import com.abhranil.stashd.data.db.DriveNodeEntity
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Folder-listing cache seen by the UI layer (interface so view models can be tested without Room). */
+interface FolderCache {
+    suspend fun storeListing(folder: DriveItem?, folderId: String, folderResourceKey: String?, children: List<DriveItem>, now: Long = System.currentTimeMillis())
+    /** Cached direct children, or null when this folder was never listed completely. */
+    suspend fun cachedChildren(folderId: String): List<DriveItem>?
+}
+
 /** Write-through cache of folder listings. Identity = Drive file id; structure = parent→child edges. */
 @Singleton
-class DriveCache @Inject constructor(private val dao: DriveNodeDao) {
+class DriveCache @Inject constructor(private val dao: DriveNodeDao) : FolderCache {
 
-    suspend fun storeListing(folder: DriveItem?, folderId: String, folderResourceKey: String?, children: List<DriveItem>, now: Long = System.currentTimeMillis()) {
+    override suspend fun storeListing(folder: DriveItem?, folderId: String, folderResourceKey: String?, children: List<DriveItem>, now: Long) {
         dao.replaceChildren(folderId, folderResourceKey, folder?.toEntity(now), children.map { it.toEntity(now) }, now)
     }
 
-    /** Cached direct children, or null when this folder was never listed completely. */
-    suspend fun cachedChildren(folderId: String): List<DriveItem>? {
+    override suspend fun cachedChildren(folderId: String): List<DriveItem>? {
         dao.listing(folderId) ?: return null
         return dao.childrenOnce(folderId).map { it.toItem() }
     }

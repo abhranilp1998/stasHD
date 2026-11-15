@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.toRoute
 import com.abhranil.stashd.ui.screens.BrowserScreen
 import com.abhranil.stashd.ui.screens.DownloadsScreen
 import com.abhranil.stashd.ui.screens.HistoryScreen
@@ -15,7 +14,8 @@ import kotlinx.serialization.Serializable
 
 @Serializable object WelcomeRoute
 @Serializable object HomeRoute
-@Serializable data class BrowserRoute(val folderId: String, val resourceKey: String? = null)
+/** A Drive folder to browse. [resourceKey] comes from the link (or the parent listing) and is sent on every call. */
+@Serializable data class BrowserRoute(val folderId: String, val resourceKey: String? = null, val name: String = "Drive folder")
 @Serializable object DownloadsRoute
 @Serializable object NotificationPreviewRoute
 @Serializable object HistoryRoute
@@ -32,15 +32,14 @@ fun StashdNavHost() {
         }
         composable<HomeRoute> {
             HomeScreen(
-                onOpenFolder = { id, key -> nav.navigate(BrowserRoute(id, key)) },
+                onOpenFolder = { id, key, name -> nav.navigate(BrowserRoute(id, key, name)) },
                 onHistory = { nav.navigate(HistoryRoute) },
                 onDownloads = { nav.navigate(DownloadsRoute) },
             )
         }
-        composable<BrowserRoute> { entry ->
-            val route = entry.toRoute<BrowserRoute>()
+        // BrowserViewModel reads folderId / resourceKey / name from SavedStateHandle (the route's args).
+        composable<BrowserRoute> {
             BrowserScreen(
-                folderId = route.folderId,
                 onBack = { nav.popBackStack() },
                 onStarted = { nav.navigate(DownloadsRoute) },
             )
