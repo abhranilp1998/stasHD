@@ -1,23 +1,12 @@
 package com.abhranil.stashd.data.auth
 
-import android.accounts.Account
 import android.app.Activity
 import android.app.PendingIntent
-import android.content.Context
 import android.content.Intent
 import com.abhranil.stashd.data.drive.DriveMode
-import com.abhranil.stashd.data.settings.SettingsStore
-import com.google.android.gms.auth.api.identity.AuthorizationRequest
-import com.google.android.gms.auth.api.identity.AuthorizationResult
-import com.google.android.gms.auth.api.identity.ClearTokenRequest
-import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.ApiException
-import com.google.android.gms.common.api.Scope
-import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -53,6 +42,9 @@ sealed interface ConsentResult {
 interface DriveAuthorizer {
     suspend fun authorize(): AuthorizationOutcome
     fun completeConsent(resultCode: Int, data: Intent?): ConsentResult
+    /** The signed-in account changed: drop (and clear) any token issued to another account. */
+    suspend fun onAccountChanged(newEmail: String?)
+    /** Sign-out: drop and clear the cached token. */
     suspend fun forget()
 }
 
@@ -70,36 +62,44 @@ object ConsentDecision {
 }
 
 /**
- * Drive authorization through Play services [Identity.getAuthorizationClient] (drive.readonly only).
+ * Drive authorization (drive.readonly only) via [AuthorizationBackend].
  * The access token lives in memory only: never persisted, never logged. Play services caches the grant
  * itself, so after a process restart [token] silently gets a fresh token without UI.
  */
 @Singleton
-class GoogleTokenProvider @Inject constructor(
-    @param:ApplicationContext private val context: Context,
-    private val settings: SettingsStore,
+class GoogleTokenProvider(
+    private val backend: AuthorizationBackend,
+    private val account: SelectedAccount,
+    private val clock: () -> Long,
 ) : TokenProvider, DriveAuthorizer {
+    @Inject constructor(backend: AuthorizationBackend, account: SelectedAccount) : this(backend, account, System::currentTimeMillis)
+
     private val mutex = Mutex()
-    private val client get() = Identity.getAuthorizationClient(context)
 
-    private class Cached(val token: String, val at: Long)
+    /** A token is only ever valid for the account it was issued to. */
+    private class Cached(val account: String?, val token: String, val at: Long)
     @Volatile private var cached: Cached? = null
-
-    private suspend fun request(): AuthorizationRequest = AuthorizationRequest.builder()
-        .setRequestedScopes(listOf(Scope(DRIVE_READONLY_SCOPE)))
-        .apply { settings.settings.first().accountEmail?.let { setAccount(Account(it, "com.google")) } }
-        .build()
+    /** Account the last interactive consent was started for; a consent result is cached under it. */
+    @Volatile private var consentAccount: String? = null
 
     override suspend fun token(): String = mutex.withLock {
-        cached?.takeIf { System.currentTimeMillis() - it.at < TOKEN_REUSE_MS }?.let { return it.token }
-        val result = client.authorize(request()).await()
-        if (result.hasResolution()) throw NeedsConsentException(result.pendingIntent)
-        accept(result) ?: throw NeedsConsentException(null)
+        // Read the selected account FIRST; the cache is only consulted for that same account.
+        val email = account.email()
+        cached?.let { c ->
+            if (c.account == email && clock() - c.at < TOKEN_REUSE_MS) return c.token
+            if (c.account != email) cached = null // account switched under us: never reuse
+        }
+        val grant = backend.authorize(DRIVE_READONLY_SCOPE, email)
+        if (grant.pendingIntent != null) {
+            consentAccount = email
+            throw NeedsConsentException(grant.pendingIntent)
+        }
+        accept(email, grant) ?: throw NeedsConsentException(null)
     }
 
     override suspend fun invalidate(token: String) {
         mutex.withLock { if (cached?.token == token) cached = null }
-        runCatching { client.clearToken(ClearTokenRequest.builder().setToken(token).build()).await() }
+        runCatching { backend.clearToken(token) }
     }
 
     override suspend fun authorize(): AuthorizationOutcome {
@@ -116,32 +116,36 @@ class GoogleTokenProvider @Inject constructor(
     }
 
     override fun completeConsent(resultCode: Int, data: Intent?): ConsentResult {
-        var result: AuthorizationResult? = null
+        var grant: AuthGrant? = null
         var error: String? = null
         if (resultCode == Activity.RESULT_OK || data != null) {
             try {
-                result = client.getAuthorizationResultFromIntent(data)
+                grant = backend.grantFromIntent(data)
             } catch (e: ApiException) {
                 // Cancel can arrive as RESULT_CANCELED with an error status in the intent; treat that as Cancelled.
                 if (resultCode != Activity.RESULT_OK && e.statusCode == CANCELED_STATUS) return ConsentResult.Cancelled
                 error = apiMessage(e)
             }
         }
-        val decision = ConsentDecision.decide(resultCode, result?.grantedScopes, result?.accessToken, error)
-        if (decision is ConsentResult.Granted) result?.let(::accept)
+        val decision = ConsentDecision.decide(resultCode, grant?.grantedScopes, grant?.accessToken, error)
+        if (decision is ConsentResult.Granted) grant?.let { accept(consentAccount, it) }
         return decision
     }
 
-    override suspend fun forget() {
-        val token = cached?.token
-        cached = null
-        if (token != null) runCatching { client.clearToken(ClearTokenRequest.builder().setToken(token).build()).await() }
+    override suspend fun onAccountChanged(newEmail: String?) {
+        val stale = mutex.withLock { cached?.takeIf { it.account != newEmail }?.also { cached = null } }
+        if (stale != null) runCatching { backend.clearToken(stale.token) }
     }
 
-    private fun accept(result: AuthorizationResult): String? {
-        if (DRIVE_READONLY_SCOPE !in result.grantedScopes) return null
-        val token = result.accessToken ?: return null
-        cached = Cached(token, System.currentTimeMillis())
+    override suspend fun forget() {
+        val token = mutex.withLock { cached?.token.also { cached = null } }
+        if (token != null) runCatching { backend.clearToken(token) }
+    }
+
+    private fun accept(email: String?, grant: AuthGrant): String? {
+        if (DRIVE_READONLY_SCOPE !in grant.grantedScopes) return null
+        val token = grant.accessToken ?: return null
+        cached = Cached(email, token, clock())
         return token
     }
 

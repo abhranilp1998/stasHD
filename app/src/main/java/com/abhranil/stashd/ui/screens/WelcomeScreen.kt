@@ -83,6 +83,7 @@ class AuthViewModel @Inject constructor(
             try {
                 val account = signInClient.signIn(activity)
                 settings.setAccount(account.email)
+                authorizer.onAccountChanged(account.email)
             } catch (e: SignInCancelledException) {
                 _state.value = WelcomeState.Message("Sign-in cancelled.", isError = false); return@launch
             } catch (e: Exception) {

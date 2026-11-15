@@ -49,5 +49,6 @@ class MemoryFolderCache : FolderCache {
 class FakeAuthorizer(var outcome: AuthorizationOutcome = AuthorizationOutcome.Granted, var consent: ConsentResult = ConsentResult.Granted) : DriveAuthorizer {
     override suspend fun authorize() = outcome
     override fun completeConsent(resultCode: Int, data: Intent?) = consent
+    override suspend fun onAccountChanged(newEmail: String?) = Unit
     override suspend fun forget() = Unit
 }

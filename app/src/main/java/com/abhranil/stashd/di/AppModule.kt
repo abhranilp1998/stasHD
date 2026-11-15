@@ -4,7 +4,11 @@ import android.content.Context
 import androidx.room.Room
 import androidx.work.WorkManager
 import com.abhranil.stashd.BuildConfig
+import com.abhranil.stashd.data.auth.AuthorizationBackend
 import com.abhranil.stashd.data.auth.DriveAuthorizer
+import com.abhranil.stashd.data.auth.PlayAuthorizationBackend
+import com.abhranil.stashd.data.auth.SelectedAccount
+import com.abhranil.stashd.data.settings.SettingsStore
 import com.abhranil.stashd.data.auth.GoogleTokenProvider
 import com.abhranil.stashd.data.auth.TokenProvider
 import com.abhranil.stashd.data.db.DownloadDao
@@ -79,5 +83,7 @@ object AppModule {
 abstract class BindingsModule {
     @Binds abstract fun tokenProvider(impl: GoogleTokenProvider): TokenProvider
     @Binds abstract fun driveAuthorizer(impl: GoogleTokenProvider): DriveAuthorizer
+    @Binds abstract fun authorizationBackend(impl: PlayAuthorizationBackend): AuthorizationBackend
+    @Binds abstract fun selectedAccount(impl: SettingsStore): SelectedAccount
     @Binds abstract fun folderCache(impl: DriveCache): FolderCache
 }

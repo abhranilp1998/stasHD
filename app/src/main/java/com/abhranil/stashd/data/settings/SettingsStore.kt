@@ -6,8 +6,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.abhranil.stashd.data.auth.SelectedAccount
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,7 +27,7 @@ data class Settings(
 )
 
 @Singleton
-class SettingsStore @Inject constructor(@param:ApplicationContext private val context: Context) {
+class SettingsStore @Inject constructor(@param:ApplicationContext private val context: Context) : SelectedAccount {
     private object Keys {
         val account = stringPreferencesKey("accountEmail")
         val dest = stringPreferencesKey("lastDestTreeUri")
@@ -47,6 +49,8 @@ class SettingsStore @Inject constructor(@param:ApplicationContext private val co
             theme = p[Keys.theme] ?: "dark",
         )
     }
+
+    override suspend fun email(): String? = settings.first().accountEmail
 
     suspend fun setAccount(email: String?) = context.dataStore.edit { if (email == null) it.remove(Keys.account) else it[Keys.account] = email }
     suspend fun setDestination(uri: String) = context.dataStore.edit { it[Keys.dest] = uri }
