@@ -1,4 +1,4 @@
-# Stashd: setup (M1a)
+# Stashd: setup (M1b)
 
 Package: `com.abhranil.stashd` · minSdk 26 · targetSdk 35 · compileSdk 36 · JDK 17 · Gradle 8.14.3 · AGP 8.13.2 · Kotlin 2.2.21
 
@@ -55,10 +55,11 @@ For reference, the build box's key (only valid for APKs built on the box) is:
 | `RealDriveRepository`: files.get, paginated files.list (pageSize 1000), all-drives flags, 401 → clear token → retry once, error mapping | Done, MockWebServer tests; **not run against real Drive yet** |
 | Sign-in → AuthorizationClient consent (PendingIntent), cancel/deny/unticked scope, in-memory token | Code done, mapping tested; **needs OAuth clients to test live** |
 | Browser: tap folder enters, checkbox selects, breadcrumbs/back, loading/empty/error/consent/offline states, selection across folders | Done, view-model tests |
+| M1b fixes: per-account token cache; shortcuts keep own identity (target stored separately); explicit incomplete listings (page cap / incompleteSearch, Continue/Retry, not cached); stale link validation cancelled + guarded; "Download this folder" (root or open folder) in the selection model | Done, regression tests |
 | Recursive expansion, dedup, downloader, UIDT/WorkManager engine | M2 |
 | History screen | Static sample |
 
-DB note: schema went v1 → v2 with destructive fallback (nothing real stored yet). Proper migrations come before M3.
+DB note: schema is now v3 (v2: edge table, v3: shortcut target columns), destructive fallback (nothing real stored yet). Proper migrations come before M3.
 
 ## 5. First live test once OAuth is set up (M1 acceptance)
 1. Install the debug build from **your** machine (its SHA-1 must be on the Android client).
@@ -66,7 +67,8 @@ DB note: schema went v1 → v2 with destructive fallback (nothing real stored ye
 3. Paste the music folder link → Open folder. Check the name shows, albums list, tap an album → tracks with sizes.
 4. Paste a file link → expect "That's a file link…". Paste a folder you can't access → not-found message.
 5. If you have an old link with `?resourcekey=`, open it and a subfolder (exercises the header).
-6. Select a file in the root, enter an album, select a track, go back: both stay selected.
+6. Select a file in the root, enter an album, select a track, go back: both stay selected. Then tick "Download this whole folder": the earlier picks fold into it.
+6b. Sign out of / switch to a second Google account (if you have one) and open a folder only that account can see.
 7. Debug logcat (`OkHttp` tag): `Authorization: ██` and no `ya29.` anywhere.
 
 ## 6. Next milestones
