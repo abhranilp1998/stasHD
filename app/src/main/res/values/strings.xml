@@ -4,4 +4,5 @@
     <string name="channel_downloads_desc">Progress of active downloads</string>
     <string name="action_pause">Pause</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_resume">Resume</string>
 </resources>

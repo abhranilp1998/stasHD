@@ -16,6 +16,8 @@ class StashdApp : Application(), Configuration.Provider {
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
+            // WorkManager's own JobScheduler ids; UIDT download jobs use 7000-7999 (UidtScheduler.jobId).
+            .setJobSchedulerJobIdRange(1_000, 5_000)
             .build()
 
     override fun onCreate() {

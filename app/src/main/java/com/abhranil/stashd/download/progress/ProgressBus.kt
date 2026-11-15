@@ -1,16 +1,17 @@
 package com.abhranil.stashd.download.progress
 
+import com.abhranil.stashd.download.core.BatchProgress
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Live snapshot the UI and notification read. Room gets the same numbers about once a second. */
+/** Live snapshot the Downloads screen and notification read. Room holds the durable numbers (≈1 s behind). */
 data class ProgressSnapshot(
     val batchId: Long = 0,
+    val expanding: Boolean = false,
+    val foldersScanned: Int = 0,
     val bytesDone: Long = 0,
     val totalBytes: Long = 0,
     val filesDone: Int = 0,
@@ -22,34 +23,30 @@ data class ProgressSnapshot(
     val etaSeconds: Long? get() = if (bytesPerSecond < 1.0) null else ((totalBytes - bytesDone) / bytesPerSecond).toLong()
 }
 
-/**
- * Hot path: [tick] is called per 256 KB chunk from download coroutines. It only touches an AtomicLong.
- * [sample] is called on a timer (100 ms for UI, 1 s for Room + notification) and builds a snapshot.
- */
+/** In-process hot channel from the running batch to the UI. Called per chunk; cheap. */
 @Singleton
 class ProgressBus @Inject constructor() {
-    private val perTask = ConcurrentHashMap<Long, AtomicLong>()
     private val speed = SpeedMeter()
-    private val _snapshot = MutableStateFlow(ProgressSnapshot())
-    val snapshot: StateFlow<ProgressSnapshot> = _snapshot.asStateFlow()
+    private val _snapshot = MutableStateFlow<ProgressSnapshot?>(null)
+    /** Null when no batch is running in this process. */
+    val snapshot: StateFlow<ProgressSnapshot?> = _snapshot.asStateFlow()
 
-    fun tick(taskId: Long, bytesDone: Long) {
-        perTask.getOrPut(taskId) { AtomicLong() }.set(bytesDone)
-    }
-
-    fun taskBytes(): Map<Long, Long> = perTask.mapValues { it.value.get() }
-
-    fun sample(base: ProgressSnapshot, nowMs: Long = System.currentTimeMillis()): ProgressSnapshot {
-        val bytes = base.bytesDone
-        val next = base.copy(bytesPerSecond = speed.update(bytes, nowMs))
+    @Synchronized
+    fun publish(p: BatchProgress, nowMs: Long = System.currentTimeMillis()): ProgressSnapshot {
+        val expanding = p.phase == BatchProgress.Phase.EXPANDING
+        val next = ProgressSnapshot(
+            batchId = p.batchId, expanding = expanding, foldersScanned = p.foldersScanned,
+            bytesDone = p.bytesDone, totalBytes = p.totalBytes, filesDone = p.filesDone, totalFiles = p.totalFiles,
+            bytesPerSecond = if (expanding) 0.0 else speed.update(p.bytesDone, nowMs), currentFile = p.currentFile,
+        )
         _snapshot.value = next
         return next
     }
 
-    fun reset() {
-        perTask.clear()
+    @Synchronized
+    fun clear() {
         speed.reset()
-        _snapshot.value = ProgressSnapshot()
+        _snapshot.value = null
     }
 }
 
@@ -60,10 +57,11 @@ class SpeedMeter(private val windowMs: Double = 3_000.0) {
     private var ema = 0.0
 
     fun update(totalBytes: Long, nowMs: Long): Double {
-        if (lastBytes < 0) {
-            lastBytes = totalBytes; lastAt = nowMs; return 0.0
+        if (lastBytes < 0 || totalBytes < lastBytes) {
+            lastBytes = totalBytes; lastAt = nowMs; return ema
         }
-        val dt = (nowMs - lastAt).coerceAtLeast(1)
+        val dt = nowMs - lastAt
+        if (dt < 200) return ema // per-chunk calls: sample at most 5×/s
         val instant = (totalBytes - lastBytes) * 1000.0 / dt
         val alpha = 1 - kotlin.math.exp(-dt / windowMs)
         ema = if (ema == 0.0) instant else ema + alpha * (instant - ema)

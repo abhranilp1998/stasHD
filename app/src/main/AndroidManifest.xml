@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 14+: user-initiated data transfer jobs (main download path). Normal permission, auto-granted. -->
+    <uses-permission android:name="android.permission.RUN_USER_INITIATED_JOBS" />
 
     <application
         android:name=".StashdApp"
@@ -32,6 +34,12 @@
         <receiver
             android:name=".download.worker.DownloadActionReceiver"
             android:exported="false" />
+
+        <!-- UIDT download job (Android 14+). -->
+        <service
+            android:name=".download.worker.DownloadJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- WorkManager runs long-running workers in this service; Android 14+ needs the type. -->
         <service

@@ -9,6 +9,8 @@ import android.content.Intent
 import androidx.core.app.NotificationCompat
 import com.abhranil.stashd.MainActivity
 import com.abhranil.stashd.R
+import com.abhranil.stashd.data.db.BatchState
+import com.abhranil.stashd.data.db.PauseReason
 import com.abhranil.stashd.download.progress.ProgressSnapshot
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Locale
@@ -17,9 +19,9 @@ import javax.inject.Singleton
 
 @Singleton
 class DownloadNotifier @Inject constructor(@param:ApplicationContext private val context: Context) {
+    private val nm get() = context.getSystemService(NotificationManager::class.java)
 
     fun ensureChannel() {
-        val nm = context.getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,
             context.getString(R.string.channel_downloads),
@@ -29,44 +31,88 @@ class DownloadNotifier @Inject constructor(@param:ApplicationContext private val
     }
 
     /** Screen 6: title with %, current file, determinate bar, bytes · speed · ETA, Pause / Cancel. */
-    fun progress(snapshot: ProgressSnapshot, itemCount: Int, cancelIntent: PendingIntent, batchId: Long): Notification {
-        val pct = (snapshot.fraction * 100).toInt()
-        val open = PendingIntent.getActivity(
-            context, 0, Intent(context, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val pause = PendingIntent.getBroadcast(
-            context, batchId.toInt(),
-            Intent(context, DownloadActionReceiver::class.java)
-                .setAction(DownloadActionReceiver.ACTION_PAUSE)
-                .putExtra(DownloadActionReceiver.EXTRA_BATCH_ID, batchId),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val detail = buildString {
-            append(formatBytes(snapshot.bytesDone)).append(" / ").append(formatBytes(snapshot.totalBytes))
-            if (snapshot.bytesPerSecond > 0) append(" · ").append(formatBytes(snapshot.bytesPerSecond.toLong())).append("/s")
-            snapshot.etaSeconds?.let { append(" · ").append(formatEta(it)).append(" left") }
+    fun progress(s: ProgressSnapshot, title: String): Notification {
+        val pct = (s.fraction * 100).toInt()
+        val (headline, detail) = if (s.expanding) {
+            "Preparing $title" to "Scanning folders · ${s.foldersScanned} scanned · ${s.totalFiles} files found"
+        } else {
+            "Downloading $title · $pct%" to buildString {
+                append(formatBytes(s.bytesDone)).append(" / ").append(formatBytes(s.totalBytes))
+                if (s.bytesPerSecond > 0) append(" · ").append(formatBytes(s.bytesPerSecond.toLong())).append("/s")
+                s.etaSeconds?.let { append(" · ").append(formatEta(it)).append(" left") }
+            }
         }
-        return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_download)
-            .setContentTitle("Downloading $itemCount items · $pct%")
-            .setContentText(snapshot.currentFile ?: detail)
-            .setSubText(detail)
-            .setProgress(100, pct, snapshot.totalBytes <= 0)
+        return builder()
+            .setContentTitle(headline)
+            .setContentText(s.currentFile ?: detail)
+            .setSubText(if (s.expanding) null else "${s.filesDone}/${s.totalFiles} files")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(listOfNotNull(s.currentFile, detail).joinToString("\n")))
+            .setProgress(100, pct, s.expanding || s.totalBytes <= 0)
             .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .setContentIntent(open)
-            .addAction(0, context.getString(R.string.action_pause), pause)
-            .addAction(0, context.getString(R.string.action_cancel), cancelIntent)
+            .addAction(0, context.getString(R.string.action_pause), action(DownloadActionReceiver.ACTION_PAUSE, s.batchId))
+            .addAction(0, context.getString(R.string.action_cancel), action(DownloadActionReceiver.ACTION_CANCEL, s.batchId))
             .build()
+    }
+
+    fun update(s: ProgressSnapshot, title: String) = post(NOTIFICATION_ID, progress(s, title))
+
+    /** Separate id so it survives the job's own notification being removed. */
+    fun paused(batchId: Long, title: String, reason: PauseReason?, message: String?) {
+        val why = when (reason) {
+            PauseReason.USER, null -> "Paused"
+            PauseReason.STORAGE_FULL -> "Paused: phone storage is full"
+            PauseReason.DESTINATION_REVOKED -> "Paused: can't write to the download folder"
+            PauseReason.NEEDS_CONSENT, PauseReason.AUTH -> "Paused: Google needs you to sign in again"
+            PauseReason.SYSTEM -> "Paused by the system"
+        }
+        post(
+            RESULT_ID,
+            builder().setContentTitle(title).setContentText(why).setSubText(message?.take(80))
+                .addAction(0, context.getString(R.string.action_resume), action(DownloadActionReceiver.ACTION_RESUME, batchId))
+                .addAction(0, context.getString(R.string.action_cancel), action(DownloadActionReceiver.ACTION_CANCEL, batchId))
+                .build(),
+        )
+    }
+
+    fun finished(title: String, state: BatchState, files: Int, failed: Int) {
+        val text = when (state) {
+            BatchState.COMPLETED -> "Done · $files files"
+            BatchState.COMPLETED_WITH_ERRORS -> "Done · $failed of $files files failed"
+            BatchState.FAILED -> "Couldn't start the download"
+            else -> state.name.lowercase()
+        }
+        post(RESULT_ID, builder().setContentTitle(title).setContentText(text).setAutoCancel(true).build())
+    }
+
+    fun clearResult() = nm.cancel(RESULT_ID)
+
+    private fun builder() = NotificationCompat.Builder(context, CHANNEL_ID)
+        .setSmallIcon(R.drawable.ic_stat_download)
+        .setOnlyAlertOnce(true)
+        .setSilent(true)
+        .setContentIntent(
+            PendingIntent.getActivity(
+                context, 0, Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            ),
+        )
+
+    private fun action(action: String, batchId: Long) = PendingIntent.getBroadcast(
+        context, action.hashCode(),
+        Intent(context, DownloadActionReceiver::class.java).setAction(action).putExtra(DownloadActionReceiver.EXTRA_BATCH_ID, batchId),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    private fun post(id: Int, n: Notification) {
+        if (nm.areNotificationsEnabled()) nm.notify(id, n)
     }
 
     companion object {
         const val CHANNEL_ID = "downloads"
         const val NOTIFICATION_ID = 4101
+        const val RESULT_ID = 4102
 
         fun formatBytes(b: Long): String {
             val units = arrayOf("B", "KB", "MB", "GB", "TB")
