@@ -24,7 +24,7 @@ class ScriptedDrive : DriveRepository {
     val failures = HashMap<String, Exception>()
     /** folderId -> page indexes that come back with incompleteSearch=true. */
     val incompletePages = HashMap<String, Set<Int>>()
-    var resolved: (DriveLink) -> DriveItem = { folder(it.id, it.resourceKey) }
+    var resolved: suspend (DriveLink) -> DriveItem = { folder(it.id, it.resourceKey) }
 
     override suspend fun resolve(link: DriveLink) = resolved(link)
 

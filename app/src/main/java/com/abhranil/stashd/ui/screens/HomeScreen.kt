@@ -59,6 +59,8 @@ import com.abhranil.stashd.ui.components.Overline
 import com.abhranil.stashd.ui.components.rememberConsentLauncher
 import com.abhranil.stashd.ui.theme.StashdThemeExt
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -90,29 +92,40 @@ class HomeViewModel @Inject constructor(
     val recents = rootDao.recent()
     val demoMode: Boolean get() = DriveMode.useFake
 
+    /** The one in-flight validation; superseded by any edit or a newer Open. */
+    private var validation: Job? = null
+
     fun onLinkChange(text: String) {
+        if (text != _state.value.link) { validation?.cancel(); validation = null }
         val parsed = LinkParser.parse(text)
         _state.value = HomeUiState(text, parsed, if (text.isNotBlank() && parsed == null) "That doesn't look like a Google Drive link" else null)
     }
 
     /** Validates the link against Drive (files.get) before opening, so bad links fail here, not in the browser. */
     fun openLink() {
+        val input = _state.value.link
         val link = _state.value.parsed ?: if (demoMode) DriveLink("demo", null, true) else return
+        if (validation?.isActive == true) return // already checking this exact input
         _state.update { it.copy(checking = true, error = null) }
-        viewModelScope.launch {
+        validation = viewModelScope.launch {
+            // Every write is guarded: it only lands if the field still holds the input this check was issued for.
+            fun applyIfCurrent(block: (HomeUiState) -> HomeUiState) = _state.update { if (it.link == input) block(it) else it }
             try {
                 val item = drive.resolve(link)
                 if (!item.isFolder) throw DriveError.NotAFolder(item)
+                if (_state.value.link != input) return@launch
                 val key = item.resourceKey ?: link.resourceKey
                 rootDao.upsert(
                     (rootDao.byFolderId(item.id) ?: DriveRootEntity(item.id, key, item.name, 0, 0, 0, 0))
                         .copy(resourceKey = key, name = item.name, lastOpenedAt = System.currentTimeMillis())
                 )
-                _state.update { it.copy(checking = false, navigateTo = OpenFolder(item.id, key, item.name)) }
+                applyIfCurrent { it.copy(checking = false, navigateTo = OpenFolder(item.id, key, item.name)) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: NeedsConsentException) {
-                _state.update { it.copy(checking = false, consentIntent = e.pendingIntent, error = if (e.pendingIntent == null) "Drive access needed. Sign in again." else null) }
+                applyIfCurrent { it.copy(checking = false, consentIntent = e.pendingIntent, error = if (e.pendingIntent == null) "Drive access needed. Sign in again." else null) }
             } catch (e: Exception) {
-                _state.update { it.copy(checking = false, error = linkError(e)) }
+                applyIfCurrent { it.copy(checking = false, error = linkError(e)) }
             }
         }
     }
