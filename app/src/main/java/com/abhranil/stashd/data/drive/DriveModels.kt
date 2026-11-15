@@ -3,6 +3,13 @@ package com.abhranil.stashd.data.drive
 /** A parsed Drive link: folder or file id plus the optional resource key from `?resourcekey=`. */
 data class DriveLink(val id: String, val resourceKey: String?, val isFolder: Boolean)
 
+/** Where a Drive shortcut points. Navigation and downloads use this; identity and name stay the shortcut's. */
+data class ShortcutTarget(val id: String, val mimeType: String?, val resourceKey: String?)
+
+/**
+ * A Drive file, folder or shortcut. [id]/[name]/[resourceKey] are always the item's OWN (a shortcut keeps its
+ * shortcut id), so a folder holding both X and a shortcut to X lists two distinct entries.
+ */
 data class DriveItem(
     val id: String,
     val name: String,
@@ -15,9 +22,17 @@ data class DriveItem(
     val childCount: Int = 0,
     /** For folders: total bytes of everything under it (filled after the walk). */
     val totalBytes: Long = size ?: 0L,
+    /** Non-null for shortcuts (mimeType [MIME_SHORTCUT]). */
+    val shortcut: ShortcutTarget? = null,
 ) {
-    val isFolder: Boolean get() = mimeType == MIME_FOLDER
-    val isGoogleDoc: Boolean get() = mimeType.startsWith("application/vnd.google-apps.") && !isFolder && mimeType != MIME_SHORTCUT
+    val isShortcut: Boolean get() = shortcut != null
+    /** Id to list / download: the target for shortcuts, else [id]. */
+    val targetId: String get() = shortcut?.id ?: id
+    val targetResourceKey: String? get() = if (shortcut != null) shortcut.resourceKey else resourceKey
+    val targetMimeType: String get() = shortcut?.mimeType ?: mimeType
+    /** Navigable as a folder (a real folder or a shortcut to one). */
+    val isFolder: Boolean get() = targetMimeType == MIME_FOLDER
+    val isGoogleDoc: Boolean get() = targetMimeType.startsWith("application/vnd.google-apps.") && !isFolder && targetMimeType != MIME_SHORTCUT
 
     companion object {
         const val MIME_FOLDER = "application/vnd.google-apps.folder"

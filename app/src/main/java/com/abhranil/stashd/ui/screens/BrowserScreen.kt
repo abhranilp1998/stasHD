@@ -202,6 +202,8 @@ private fun FolderList(c: FolderContent.Loaded, state: BrowserUiState, vm: Brows
                     Text(item.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
                         when {
+                            item.isShortcut && item.isFolder -> "Shortcut to folder"
+                            item.isShortcut -> "Shortcut"
                             item.isFolder -> "Folder"
                             item.isGoogleDoc -> "Google Docs file (export in a later version)"
                             !item.canDownload -> "Owner disabled downloads"

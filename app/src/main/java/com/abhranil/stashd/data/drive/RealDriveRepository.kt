@@ -46,7 +46,10 @@ class RealDriveRepository @Inject constructor(
             json.decodeFromString<FileJson>(it).toItem()
         }
         // The link's own key wins if the API omitted it (it only returns keys the caller may see).
-        return if (item.resourceKey == null && item.id == link.id) item.copy(resourceKey = link.resourceKey) else item
+        val withKey = if (item.resourceKey == null && item.id == link.id) item.copy(resourceKey = link.resourceKey) else item
+        // A pasted link to a shortcut: browse the target.
+        val target = withKey.shortcut ?: return withKey
+        return resolve(DriveLink(target.id, target.resourceKey, target.mimeType == DriveItem.MIME_FOLDER))
     }
 
     override suspend fun listPage(folderId: String, resourceKey: String?, pageToken: String?): DrivePage {

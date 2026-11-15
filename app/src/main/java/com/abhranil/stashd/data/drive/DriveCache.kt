@@ -29,11 +29,13 @@ class DriveCache @Inject constructor(private val dao: DriveNodeDao) : FolderCach
         fun DriveItem.toEntity(now: Long) = DriveNodeEntity(
             fileId = id, name = name, mimeType = mimeType, size = size, md5 = md5, resourceKey = resourceKey,
             isFolder = isFolder, isGoogleDoc = isGoogleDoc, canDownload = canDownload, modifiedTime = modifiedTime, cachedAt = now,
+            targetId = shortcut?.id, targetMimeType = shortcut?.mimeType, targetResourceKey = shortcut?.resourceKey,
         )
 
         fun DriveNodeEntity.toItem() = DriveItem(
             id = fileId, name = name, mimeType = mimeType, size = size, md5 = md5, resourceKey = resourceKey,
             modifiedTime = modifiedTime, canDownload = canDownload,
+            shortcut = targetId?.let { ShortcutTarget(it, targetMimeType, targetResourceKey) },
         )
     }
 }

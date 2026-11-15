@@ -36,6 +36,10 @@ data class DriveNodeEntity(
     val canDownload: Boolean,
     val modifiedTime: Long,
     val cachedAt: Long,
+    /** Shortcut target (null for non-shortcuts). The row's identity stays the shortcut's own fileId. */
+    val targetId: String? = null,
+    val targetMimeType: String? = null,
+    val targetResourceKey: String? = null,
 )
 
 /** "childId is listed inside parentId". A node may have several parents (multi-parent items, shortcuts). */

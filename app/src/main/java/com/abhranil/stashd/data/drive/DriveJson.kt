@@ -42,31 +42,22 @@ internal const val FILE_FIELDS =
     "id,name,mimeType,size,md5Checksum,modifiedTime,resourceKey,capabilities/canDownload," +
         "shortcutDetails/targetId,shortcutDetails/targetMimeType,shortcutDetails/targetResourceKey"
 
-/** Shortcuts are followed: the item takes the target's id, mime type and resource key, keeping the shortcut's name. */
-internal fun FileJson.toItem(): DriveItem {
-    val target = shortcutDetails?.targetId
-    if (mimeType == DriveItem.MIME_SHORTCUT && target != null) {
-        return DriveItem(
-            id = target,
-            name = name,
-            mimeType = shortcutDetails.targetMimeType ?: mimeType,
-            size = null,
-            md5 = null,
-            resourceKey = shortcutDetails.targetResourceKey,
-            modifiedTime = parseTime(modifiedTime),
-            canDownload = capabilities?.canDownload ?: true,
-        )
-    }
-    return DriveItem(
-        id = id,
-        name = name,
-        mimeType = mimeType,
-        size = size?.toLongOrNull(),
-        md5 = md5Checksum,
-        resourceKey = resourceKey,
-        modifiedTime = parseTime(modifiedTime),
-        canDownload = capabilities?.canDownload ?: true,
-    )
-}
+/**
+ * Shortcuts keep their OWN id, name and resource key (identity, list key, cache row); the target's id,
+ * mime type and resource key go into [DriveItem.shortcut] for navigation and downloads.
+ */
+internal fun FileJson.toItem(): DriveItem = DriveItem(
+    id = id,
+    name = name,
+    mimeType = mimeType,
+    size = size?.toLongOrNull(),
+    md5 = md5Checksum,
+    resourceKey = resourceKey,
+    modifiedTime = parseTime(modifiedTime),
+    canDownload = capabilities?.canDownload ?: true,
+    shortcut = shortcutDetails?.targetId
+        ?.takeIf { mimeType == DriveItem.MIME_SHORTCUT }
+        ?.let { ShortcutTarget(it, shortcutDetails.targetMimeType, shortcutDetails.targetResourceKey) },
+)
 
 private fun parseTime(s: String?): Long = s?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L

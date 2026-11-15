@@ -35,6 +35,10 @@ class FakeDriveRepository @Inject constructor() : DriveRepository {
         folder("f8", "Empty folder", 0, 0),
         folder("f9", "No access (demo error)", 0, 0),
         DriveItem("r1", "muzik.rar", "application/vnd.rar", 5_040_000_000, null, null, 0L, true),
+        DriveItem(
+            "s1", "Shortcut to Coldplay", DriveItem.MIME_SHORTCUT, null, null, null, 0L, true,
+            shortcut = ShortcutTarget("f1", DriveItem.MIME_FOLDER, null),
+        ),
     )
 
     private fun children(folderId: String): List<DriveItem> = when {

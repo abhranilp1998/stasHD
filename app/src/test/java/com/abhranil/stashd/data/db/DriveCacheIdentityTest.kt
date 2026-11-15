@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.abhranil.stashd.data.drive.DriveCache
 import com.abhranil.stashd.data.drive.DriveItem
+import com.abhranil.stashd.data.drive.ShortcutTarget
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -71,6 +72,18 @@ class DriveCacheIdentityTest {
         cache.storeListing(null, "Empty", null, emptyList())
         assertEquals(emptyList<DriveItem>(), cache.cachedChildren("Empty"))
         assertEquals(null, cache.cachedChildren("Unknown"))
+    }
+
+    @Test fun fileAndShortcutToItAreTwoCachedRowsWithTargetsPreserved() = runTest {
+        val x = file("X")
+        val sc = DriveItem("sc", "Shortcut to X", DriveItem.MIME_SHORTCUT, null, null, null, 0L, true, shortcut = ShortcutTarget("X", "audio/flac", "0-tk"))
+        cache.storeListing(null, "P", null, listOf(x, sc))
+        val back = cache.cachedChildren("P")!!
+        assertEquals(setOf("X", "sc"), back.map { it.id }.toSet())
+        val cachedShortcut = back.first { it.id == "sc" }
+        assertEquals("Shortcut to X", cachedShortcut.name)
+        assertEquals(ShortcutTarget("X", "audio/flac", "0-tk"), cachedShortcut.shortcut)
+        assertEquals("X.flac", back.first { it.id == "X" }.name)
     }
 
     @Test fun pruneKeepsRootsAndListedNodes() = runTest {

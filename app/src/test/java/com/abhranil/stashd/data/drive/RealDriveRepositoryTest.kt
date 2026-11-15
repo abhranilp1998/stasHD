@@ -102,13 +102,15 @@ class RealDriveRepositoryTest {
         assertEquals("0-linkKey", item.resourceKey)
     }
 
-    @Test fun shortcutIsFollowedWithTargetResourceKey() = runTest {
+    @Test fun shortcutKeepsOwnIdentityAndCarriesTargetResourceKey() = runTest {
         server.enqueue(json("""{"files":[{"id":"sc1","name":"Shortcut to Album","mimeType":"application/vnd.google-apps.shortcut",
             "shortcutDetails":{"targetId":"$childId","targetMimeType":"application/vnd.google-apps.folder","targetResourceKey":"0-targetKey"}}]}"""))
         val item = repo.listChildren(folderId, null).single()
-        assertEquals(childId, item.id)
+        assertEquals("sc1", item.id)
+        assertEquals(childId, item.targetId)
         assertTrue(item.isFolder)
-        assertEquals("0-targetKey", item.resourceKey)
+        assertEquals(null, item.resourceKey)
+        assertEquals("0-targetKey", item.targetResourceKey)
         assertEquals("Shortcut to Album", item.name)
     }
 

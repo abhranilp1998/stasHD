@@ -23,7 +23,8 @@ class Converters {
         FileTaskEntity::class,
     ],
     // v2 (M1): node identity by Drive file id + edge table. Pre-release, so destructive migration (see AppModule).
-    version = 2,
+    // v3 (M1b): shortcut target columns on drive_node.
+    version = 3,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

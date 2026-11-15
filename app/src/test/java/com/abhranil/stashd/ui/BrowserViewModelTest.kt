@@ -4,6 +4,8 @@ import androidx.lifecycle.SavedStateHandle
 import com.abhranil.stashd.data.auth.ConsentResult
 import com.abhranil.stashd.data.auth.NeedsConsentException
 import com.abhranil.stashd.data.drive.DriveError
+import com.abhranil.stashd.data.drive.DriveItem
+import com.abhranil.stashd.data.drive.ShortcutTarget
 import com.abhranil.stashd.testing.FakeAuthorizer
 import com.abhranil.stashd.testing.MemoryFolderCache
 import com.abhranil.stashd.testing.ScriptedDrive
@@ -150,5 +152,18 @@ class BrowserViewModelTest {
     @Test fun noResourceKeyMeansNullAllTheWay() {
         vm(rk = null)
         assertEquals(null, drive.calls.first().resourceKey)
+    }
+
+    @Test fun shortcutToFolderNavigatesWithTargetIdAndKeyButSelectsByShortcutId() {
+        val sc = DriveItem("sc", "Shortcut to A", DriveItem.MIME_SHORTCUT, null, null, null, 0L, true, shortcut = ShortcutTarget("A", DriveItem.MIME_FOLDER, "0-keyA"))
+        drive.pages["ROOT"] = listOf(listOf(folder("A", rk = "0-keyA"), sc))
+        val vm = vm()
+        assertEquals(2, vm.state.value.items.map { it.id }.toSet().size)
+        vm.toggle(sc)
+        assertEquals(setOf("sc"), vm.state.value.selected.keys)
+        vm.open(sc)
+        assertEquals(ScriptedDrive.Call("A", "0-keyA", null), drive.calls.last())
+        assertEquals("Shortcut to A", vm.state.value.current.name)
+        assertEquals("sc", vm.state.value.coveringFolder?.selectionKey) // selected shortcut covers its contents
     }
 }

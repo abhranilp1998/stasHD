@@ -29,8 +29,11 @@ import kotlinx.coroutines.launch
 import java.io.IOException
 import javax.inject.Inject
 
-/** A level of the folder path. The resource key travels with it so every listing call can send it. */
-data class Crumb(val id: String, val name: String, val resourceKey: String?)
+/**
+ * A level of the folder path. [id]/[resourceKey] are what gets listed (a shortcut's TARGET);
+ * [selectionKey] is the item's own id (the shortcut's id), used for selection.
+ */
+data class Crumb(val id: String, val name: String, val resourceKey: String?, val selectionKey: String = id)
 
 sealed interface FolderContent {
     data class Loading(val itemsSoFar: Int = 0) : FolderContent
@@ -50,7 +53,7 @@ data class BrowserUiState(
     val items: List<DriveItem> get() = (content as? FolderContent.Loaded)?.items.orEmpty()
 
     /** The selected ancestor (or current folder) that already includes everything shown here, if any. */
-    val coveringFolder: Crumb? get() = stack.firstOrNull { it.id in selected }
+    val coveringFolder: Crumb? get() = stack.firstOrNull { it.selectionKey in selected }
 
     val selectedFolders: Int get() = selected.values.count { it.item.isFolder }
     val selectedFiles: Int get() = selected.values.count { !it.item.isFolder }
@@ -87,7 +90,7 @@ class BrowserViewModel @Inject constructor(
 
     fun open(item: DriveItem) {
         if (!item.isFolder) { toggle(item); return }
-        val crumb = Crumb(item.id, item.name, item.resourceKey)
+        val crumb = Crumb(item.targetId, item.name, item.targetResourceKey, selectionKey = item.id)
         _state.update { it.copy(stack = it.stack + crumb) }
         load(crumb)
     }
