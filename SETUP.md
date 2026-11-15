@@ -1,8 +1,10 @@
-# Stashd: setup (M0)
+# Stashd: setup (M1a)
 
 Package: `com.abhranil.stashd` · minSdk 26 · targetSdk 35 · compileSdk 36 · JDK 17 · Gradle 8.14.3 · AGP 8.13.2 · Kotlin 2.2.21
 
-M0 works **without any Google Cloud setup**. If no Web client ID is set, the Welcome screen skips sign-in, browsing uses a fake Drive repo (sample albums), and **Downloads → "Start demo batch"** runs a simulated 4-file download. That demo uses the real foreground service, notification and progress path.
+The app works **without any Google Cloud setup** in *demo mode*: if no Web client ID is set, Welcome skips sign-in and the browser uses `FakeDriveRepository` (sample albums with nested folders, a resource-keyed folder, an empty folder, a no-access folder and 2-page listings). **Downloads → "Start demo batch"** still runs the simulated download.
+
+Once `stashd.webClientId` is set (step 3), the real path is used: Sign in with Google → Drive consent (drive.readonly) → `RealDriveRepository` (Drive v3 over OkHttp). To force demo data in a debug build anyway, add `stashd.fakeDrive=true` to `~/.gradle/gradle.properties`.
 
 ---
 
@@ -43,18 +45,29 @@ For reference, the build box's key (only valid for APKs built on the box) is:
    ```
 7. Rebuild. Welcome → **Sign in with Google** now uses Credential Manager, then asks for Drive read access through AuthorizationClient.
 
-## 4. What's real vs stubbed in M0
+## 4. What's real vs stubbed (M1a)
 | Area | Status |
 |---|---|
-| Theme (tokens, Outfit/Inter, shapes), 7 screens + nav | Done (placeholder UI, mockup layout) |
-| Room schema v1 (roots, nodes, batches, items, file tasks) + DAOs | Done |
-| Hilt, WorkManager on-demand init, dataSync FGS, notification channel and actions | Done |
-| Link parsing (folder/file/open?id/resourcekey) | Done + 6 unit tests |
-| SAF folder picker + persisted settings (DataStore) | Done |
-| Sign-in (Credential Manager) + Drive token (AuthorizationClient) | Code written, needs step 3 |
-| DriveRepository | **Fake** (`FakeDriveRepository`); real Drive v3 client is M1/M2 |
-| DownloadWorker | Demo simulation; real `runBatch` (Range resume, SAF writes) is `TODO(M3)` |
-| History screen | Static sample data |
+| Theme, 7 screens, navigation | Done |
+| Drive cache (Room v2): nodes keyed by file id + parent→child edges | Done, Room tests (the "parent root loses nested folder" bug) |
+| Resource keys: link → route → view model → `X-Goog-Drive-Resource-Keys` header (folder being listed, shortcut targets) | Done, tests |
+| HTTP log redaction (Authorization, cookies, resource keys, bearer/token params) | Done, tests |
+| `RealDriveRepository`: files.get, paginated files.list (pageSize 1000), all-drives flags, 401 → clear token → retry once, error mapping | Done, MockWebServer tests; **not run against real Drive yet** |
+| Sign-in → AuthorizationClient consent (PendingIntent), cancel/deny/unticked scope, in-memory token | Code done, mapping tested; **needs OAuth clients to test live** |
+| Browser: tap folder enters, checkbox selects, breadcrumbs/back, loading/empty/error/consent/offline states, selection across folders | Done, view-model tests |
+| Recursive expansion, dedup, downloader, UIDT/WorkManager engine | M2 |
+| History screen | Static sample |
 
-## 5. Next milestones
-M1 real auth + `files.list` browser · M2 recursive walk into Room · M3 real downloader (resume, parallel, SAF) · M4 polish/history/retry.
+DB note: schema went v1 → v2 with destructive fallback (nothing real stored yet). Proper migrations come before M3.
+
+## 5. First live test once OAuth is set up (M1 acceptance)
+1. Install the debug build from **your** machine (its SHA-1 must be on the Android client).
+2. Continue with Google → pick your account → allow "See and download your Google Drive files". Try Cancel once: you should get a calm "Drive access is needed…" message, and Continue works again.
+3. Paste the music folder link → Open folder. Check the name shows, albums list, tap an album → tracks with sizes.
+4. Paste a file link → expect "That's a file link…". Paste a folder you can't access → not-found message.
+5. If you have an old link with `?resourcekey=`, open it and a subfolder (exercises the header).
+6. Select a file in the root, enter an album, select a track, go back: both stay selected.
+7. Debug logcat (`OkHttp` tag): `Authorization: ██` and no `ya29.` anywhere.
+
+## 6. Next milestones
+M1 remainder (live verification + polish below) · M2 dependable downloading (UIDT on Android 14+, WorkManager fallback, shared downloader, recursive expansion, dedup, pause/resume) · M3 phone acceptance · later polish.
