@@ -103,4 +103,20 @@ class DownloadThisFolderTest {
         val sel = vm.state.value.selected.getValue("sc")
         assertEquals("A" to "0-keyA", sel.item.targetId to sel.item.targetResourceKey)
     }
+
+    @Test fun selectionsBecomeBatchPicksWithParentPaths() {
+        val vm = vm()
+        vm.toggle(file("r1"))
+        vm.open(folder("A", rk = "0-keyA"))
+        vm.toggle(file("a1"))
+        val picks = vm.picks().associateBy { it.item.id }
+        assertEquals(emptyList<String>(), picks.getValue("r1").parentNames)
+        assertEquals(listOf("Folder A"), picks.getValue("a1").parentNames) // root itself excluded
+
+        vm.back(); vm.toggleCurrentFolder() // "Download this folder" at the root = one folder pick
+        val root = vm.picks().single()
+        assertEquals("ROOT", root.item.id)
+        assertTrue(root.item.isFolder)
+        assertEquals(emptyList<String>(), root.parentNames)
+    }
 }

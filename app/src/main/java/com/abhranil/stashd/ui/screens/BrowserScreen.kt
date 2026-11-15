@@ -1,5 +1,9 @@
 package com.abhranil.stashd.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -128,7 +132,7 @@ fun BrowserScreen(onBack: () -> Unit, onStarted: () -> Unit, vm: BrowserViewMode
                 summary = selectionSummary(state),
                 count = state.selected.size,
                 onCancel = { showSheet = false },
-                onStart = { showSheet = false; onStarted() },
+                onStart = { vm.startDownload(onStarted = { showSheet = false; onStarted() }) },
             )
         }
     }
@@ -196,7 +200,7 @@ private fun Breadcrumbs(stack: List<Crumb>, onCrumb: (Int) -> Unit) {
 private val IntrinsicCrumbWidth = 140.dp
 
 @Composable
-private fun CenterState(content: @Composable () -> Unit) {
+internal fun CenterState(content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) { content() }
     }
@@ -290,7 +294,10 @@ private fun SelectionBar(state: BrowserUiState, onClear: () -> Unit, onDownload:
 @Composable
 private fun DestinationSheet(vm: BrowserViewModel, summary: String, count: Int, onCancel: () -> Unit, onStart: () -> Unit) {
     val settings by vm.settings.collectAsState()
+    val startError by vm.startError.collectAsState()
     val context = LocalContext.current
+    // UIDT/foreground downloads show a progress notification; ask once (Android 13+), start either way.
+    val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onStart() }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         if (uri != null) {
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
@@ -315,10 +322,18 @@ private fun DestinationSheet(vm: BrowserViewModel, summary: String, count: Int, 
         OptionRow("Keep folder structure", "Each album lands in its own folder", settings.keepStructure, vm::setKeepStructure)
         OptionRow("Wi-Fi only", "Pause on mobile data, resume on Wi-Fi", settings.wifiOnly, vm::setWifiOnly)
         OptionRow("Skip files already on phone", "Matched by name and size", settings.skipExisting, vm::setSkipExisting)
-        PlaceholderNote("Downloading the selection lands in M2. Start opens the Downloads screen (demo).")
+        startError?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onCancel) { Text("Cancel") }
-            Button(onClick = onStart, modifier = Modifier.weight(1f)) { Text("Start download") }
+            OutlinedButton(onClick = { vm.clearStartError(); onCancel() }) { Text("Cancel") }
+            Button(
+                onClick = {
+                    val needsAsk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                    if (needsAsk) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else onStart()
+                },
+                enabled = settings.lastDestTreeUri != null,
+                modifier = Modifier.weight(1f),
+            ) { Text("Start download") }
         }
     }
 }

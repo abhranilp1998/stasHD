@@ -27,6 +27,10 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.abhranil.stashd.data.db.ActiveBatchExists
+import com.abhranil.stashd.download.core.DownloadController
+import com.abhranil.stashd.download.core.NewBatch
+import com.abhranil.stashd.download.core.PickedItem
 import java.io.IOException
 import javax.inject.Inject
 
@@ -97,6 +101,7 @@ class BrowserViewModel @Inject constructor(
     private val cache: FolderCache,
     private val authorizer: DriveAuthorizer,
     private val settingsStore: SettingsStore?,
+    private val controller: DownloadController? = null,
 ) : ViewModel() {
 
     private val root = Crumb(
@@ -252,4 +257,30 @@ class BrowserViewModel @Inject constructor(
     fun setWifiOnly(v: Boolean) = viewModelScope.launch { settingsStore?.setWifiOnly(v) }
     fun setKeepStructure(v: Boolean) = viewModelScope.launch { settingsStore?.setKeepStructure(v) }
     fun setSkipExisting(v: Boolean) = viewModelScope.launch { settingsStore?.setSkipExisting(v) }
+
+    private val _startError = MutableStateFlow<String?>(null)
+    val startError: StateFlow<String?> = _startError.asStateFlow()
+
+    /** Selections as batch picks: parent names from the linked root (excluded) down to where each was picked. */
+    fun picks(): List<PickedItem> = _state.value.selected.values.map { sel -> PickedItem(sel.item, sel.path.drop(1).map { it.name }) }
+
+    /** "Start download" (covers "Download this folder" too: it's just a selection). One active batch at a time. */
+    fun startDownload(onStarted: () -> Unit) {
+        val c = controller ?: return
+        val s = settings.value
+        val dest = s.lastDestTreeUri ?: run { _startError.value = "Choose a folder to save to first."; return }
+        val picks = picks().ifEmpty { return }
+        viewModelScope.launch {
+            try {
+                c.create(NewBatch(root.id, root.name, picks, dest, s.keepStructure, s.wifiOnly, s.skipExisting))
+                _startError.value = null
+                clearSelection()
+                onStarted()
+            } catch (e: ActiveBatchExists) {
+                _startError.value = "Another download is still active. Finish or cancel it on the Downloads screen first."
+            }
+        }
+    }
+
+    fun clearStartError() { _startError.value = null }
 }
