@@ -12,6 +12,7 @@ import com.abhranil.stashd.data.db.DriveRootDao
 import com.abhranil.stashd.data.db.StashdDatabase
 import com.abhranil.stashd.data.drive.DriveRepository
 import com.abhranil.stashd.data.drive.FakeDriveRepository
+import com.abhranil.stashd.data.net.HttpLogging
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -20,7 +21,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 
@@ -44,7 +44,8 @@ object AppModule {
         .readTimeout(60, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .apply {
-            if (BuildConfig.DEBUG) addInterceptor(HttpLoggingInterceptor().setLevel(HttpLoggingInterceptor.Level.HEADERS))
+            // Debug only, and always via HttpLogging so Authorization/resource keys are redacted.
+            if (BuildConfig.DEBUG) addInterceptor(HttpLogging.interceptor())
         }
         .build()
 
