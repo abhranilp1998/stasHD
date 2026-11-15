@@ -61,3 +61,22 @@ class LinkParserResourceKeyTest {
         assertEquals("1AbCdEfGhIjKlMnOp" to "0-k", l.id to l.resourceKey)
     }
 }
+
+class NameSanitizerTest {
+    @Test fun dotsAndSeparators() {
+        assertEquals("_", NameSanitizer.sanitize(".."))
+        assertEquals("a_b_c", NameSanitizer.sanitize("a/b\\c"))
+    }
+
+    @Test fun longMultibyteNamesFitInBytesKeepingExtension() {
+        val name = "曲".repeat(150) + ".flac"
+        val s = NameSanitizer.sanitize(name)
+        assertTrue(s.toByteArray().size <= NameSanitizer.MAX_NAME_BYTES)
+        assertTrue(s.endsWith(".flac"))
+    }
+
+    @Test fun dedupeIsCaseInsensitive() {
+        assertEquals("Song (2).flac", NameSanitizer.dedupe("Song.flac", setOf("song.FLAC")))
+        assertEquals("Song (3).flac", NameSanitizer.dedupe("Song.flac", setOf("Song.flac", "Song (2).flac")))
+    }
+}
