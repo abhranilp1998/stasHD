@@ -2,7 +2,6 @@ package com.abhranil.stashd.data.db
 
 import androidx.room.Dao
 import androidx.room.Insert
-import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
@@ -17,25 +16,60 @@ interface DriveRootDao {
     suspend fun byFolderId(folderId: String): DriveRootEntity?
 
     @Upsert
-    suspend fun upsert(root: DriveRootEntity): Long
+    suspend fun upsert(root: DriveRootEntity)
 }
 
 @Dao
 interface DriveNodeDao {
-    @Query("SELECT * FROM drive_node WHERE rootId = :rootId AND parentId = :parentId ORDER BY isFolder DESC, name COLLATE NOCASE")
-    fun children(rootId: Long, parentId: String): Flow<List<DriveNodeEntity>>
+    @Query(
+        """
+        SELECT n.* FROM drive_node n JOIN drive_edge e ON e.childId = n.fileId
+        WHERE e.parentId = :parentId ORDER BY n.isFolder DESC, e.position, n.name COLLATE NOCASE
+        """
+    )
+    fun children(parentId: String): Flow<List<DriveNodeEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAll(nodes: List<DriveNodeEntity>)
+    @Query(
+        """
+        SELECT n.* FROM drive_node n JOIN drive_edge e ON e.childId = n.fileId
+        WHERE e.parentId = :parentId ORDER BY n.isFolder DESC, e.position, n.name COLLATE NOCASE
+        """
+    )
+    suspend fun childrenOnce(parentId: String): List<DriveNodeEntity>
 
-    @Query("DELETE FROM drive_node WHERE rootId = :rootId")
-    suspend fun clearRoot(rootId: Long)
+    @Query("SELECT * FROM drive_node WHERE fileId = :fileId")
+    suspend fun node(fileId: String): DriveNodeEntity?
 
+    @Query("SELECT parentId FROM drive_edge WHERE childId = :childId")
+    suspend fun parentsOf(childId: String): List<String>
+
+    @Query("SELECT * FROM drive_listing WHERE folderId = :folderId")
+    suspend fun listing(folderId: String): DriveListingEntity?
+
+    /** Insert-or-update in place. Never REPLACE: a REPLACE deletes the row first and the edge FK cascade would drop other parents' edges. */
+    @Upsert suspend fun upsertNodes(nodes: List<DriveNodeEntity>)
+    @Upsert suspend fun upsertListing(listing: DriveListingEntity)
+    @Upsert suspend fun upsertEdges(edges: List<DriveEdgeEntity>)
+
+    @Query("DELETE FROM drive_edge WHERE parentId = :parentId")
+    suspend fun clearEdgesOf(parentId: String)
+
+    /**
+     * Replace the cached direct children of ONE folder. Only edges whose parent is [parentId] are touched;
+     * nodes are upserted, never deleted, so other folders' caches that reference them stay intact.
+     */
     @Transaction
-    suspend fun replaceTree(rootId: Long, nodes: List<DriveNodeEntity>) {
-        clearRoot(rootId)
-        insertAll(nodes)
+    suspend fun replaceChildren(parentId: String, parentResourceKey: String?, self: DriveNodeEntity?, children: List<DriveNodeEntity>, now: Long) {
+        val all = if (self != null) children + self else children
+        upsertNodes(all)
+        clearEdgesOf(parentId)
+        upsertEdges(children.mapIndexed { i, c -> DriveEdgeEntity(parentId, c.fileId, i) })
+        upsertListing(DriveListingEntity(parentId, parentResourceKey, children.size, now))
     }
+
+    /** Housekeeping: nodes no folder lists and that are not a pasted root. */
+    @Query("DELETE FROM drive_node WHERE fileId NOT IN (SELECT childId FROM drive_edge) AND fileId NOT IN (SELECT folderId FROM drive_root) AND fileId NOT IN (SELECT folderId FROM drive_listing)")
+    suspend fun pruneOrphans(): Int
 }
 
 @Dao

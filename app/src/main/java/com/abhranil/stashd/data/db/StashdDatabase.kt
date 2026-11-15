@@ -16,11 +16,14 @@ class Converters {
     entities = [
         DriveRootEntity::class,
         DriveNodeEntity::class,
+        DriveEdgeEntity::class,
+        DriveListingEntity::class,
         DownloadBatchEntity::class,
         DownloadItemEntity::class,
         FileTaskEntity::class,
     ],
-    version = 1,
+    // v2 (M1): node identity by Drive file id + edge table. Pre-release, so destructive migration (see AppModule).
+    version = 2,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

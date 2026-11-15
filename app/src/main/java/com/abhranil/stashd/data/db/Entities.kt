@@ -5,11 +5,10 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-/** A pasted Drive folder link (screen 2, recent folders). */
-@Entity(tableName = "drive_root", indices = [Index(value = ["folderId"], unique = true)])
+/** A pasted Drive folder link (screen 2, recent folders). Keyed by the Drive folder id. */
+@Entity(tableName = "drive_root")
 data class DriveRootEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val folderId: String,
+    @PrimaryKey val folderId: String,
     val resourceKey: String?,
     val name: String,
     val totalBytes: Long,
@@ -18,16 +17,15 @@ data class DriveRootEntity(
     val lastOpenedAt: Long,
 )
 
-/** Cached Drive tree for the browser (screen 3). */
-@Entity(
-    tableName = "drive_node",
-    foreignKeys = [ForeignKey(entity = DriveRootEntity::class, parentColumns = ["id"], childColumns = ["rootId"], onDelete = ForeignKey.CASCADE)],
-    indices = [Index(value = ["rootId", "parentId"])],
-)
+/**
+ * One row per Drive file or folder, keyed ONLY by its Drive file id. It does not belong to any root:
+ * the same folder can be a pasted root and a child of another pasted root at once.
+ * Parent/child structure lives in [DriveEdgeEntity], so re-caching one folder can never delete or
+ * re-parent rows that another cached folder points at (the M0 bug: rootId + REPLACE on fileId).
+ */
+@Entity(tableName = "drive_node")
 data class DriveNodeEntity(
     @PrimaryKey val fileId: String,
-    val rootId: Long,
-    val parentId: String?,
     val name: String,
     val mimeType: String,
     val size: Long?,
@@ -37,7 +35,29 @@ data class DriveNodeEntity(
     val isGoogleDoc: Boolean,
     val canDownload: Boolean,
     val modifiedTime: Long,
-    val relPath: String,
+    val cachedAt: Long,
+)
+
+/** "childId is listed inside parentId". A node may have several parents (multi-parent items, shortcuts). */
+@Entity(
+    tableName = "drive_edge",
+    primaryKeys = ["parentId", "childId"],
+    foreignKeys = [ForeignKey(entity = DriveNodeEntity::class, parentColumns = ["fileId"], childColumns = ["childId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index(value = ["childId"])],
+)
+data class DriveEdgeEntity(
+    val parentId: String,
+    val childId: String,
+    val position: Int,
+)
+
+/** When a folder's direct children were last listed completely (all pages). */
+@Entity(tableName = "drive_listing")
+data class DriveListingEntity(
+    @PrimaryKey val folderId: String,
+    val resourceKey: String?,
+    val childCount: Int,
+    val listedAt: Long,
 )
 
 enum class BatchState { RUNNING, PAUSED, COMPLETED, COMPLETED_WITH_ERRORS, CANCELLED }
@@ -45,10 +65,10 @@ enum class BatchState { RUNNING, PAUSED, COMPLETED, COMPLETED_WITH_ERRORS, CANCE
 enum class TaskState { QUEUED, RUNNING, PAUSED, WAITING_NETWORK, DONE, SKIPPED, FAILED, CANCELLED }
 
 /** One per "Start download" tap (screens 4, 5, 7). */
-@Entity(tableName = "download_batch", indices = [Index(value = ["rootId"])])
+@Entity(tableName = "download_batch", indices = [Index(value = ["rootFolderId"])])
 data class DownloadBatchEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val rootId: Long,
+    val rootFolderId: String,
     val destTreeUri: String,
     val keepStructure: Boolean,
     val wifiOnly: Boolean,

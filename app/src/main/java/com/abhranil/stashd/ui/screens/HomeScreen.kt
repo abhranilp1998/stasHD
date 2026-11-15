@@ -118,7 +118,7 @@ fun HomeScreen(
             if (recents.isEmpty()) {
                 item { Text("Folders you open appear here.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            items(recents, key = DriveRootEntity::id) { root ->
+            items(recents, key = DriveRootEntity::folderId) { root ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconTile(Icons.Rounded.LibraryMusic, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primaryContainer)
                     Spacer(Modifier.width(14.dp))

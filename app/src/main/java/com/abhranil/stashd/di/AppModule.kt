@@ -29,7 +29,10 @@ import javax.inject.Singleton
 object AppModule {
     @Provides @Singleton
     fun database(@ApplicationContext context: Context): StashdDatabase =
-        Room.databaseBuilder(context, StashdDatabase::class.java, "stashd.db").build()
+        Room.databaseBuilder(context, StashdDatabase::class.java, "stashd.db")
+            // Sideloaded hobby build with no shipped data yet; the cache is rebuildable. Add real Migrations before M3.
+            .fallbackToDestructiveMigration(dropAllTables = true)
+            .build()
 
     @Provides fun driveRootDao(db: StashdDatabase): DriveRootDao = db.driveRootDao()
     @Provides fun driveNodeDao(db: StashdDatabase): DriveNodeDao = db.driveNodeDao()
