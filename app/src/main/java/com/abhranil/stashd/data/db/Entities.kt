@@ -64,28 +64,60 @@ data class DriveListingEntity(
     val listedAt: Long,
 )
 
-enum class BatchState { RUNNING, PAUSED, COMPLETED, COMPLETED_WITH_ERRORS, CANCELLED }
+/** Batch lifecycle. EXPANDING/QUEUED/RUNNING/PAUSED are "active": at most one such batch exists (DownloadDao.createBatch). */
+enum class BatchState {
+    /** Picks recorded; folders are being listed into file tasks. */
+    EXPANDING,
+    /** Ready; waiting for the scheduler (or network/conditions). */
+    QUEUED,
+    RUNNING,
+    /** Stopped with resume offsets kept. See [PauseReason]. Pause != cancel. */
+    PAUSED,
+    COMPLETED,
+    COMPLETED_WITH_ERRORS,
+    /** User cancelled: partial (.stashdpart) files deleted, completed files kept. */
+    CANCELLED,
+    /** Couldn't even start (e.g. expansion failed permanently). */
+    FAILED;
 
-enum class TaskState { QUEUED, RUNNING, PAUSED, WAITING_NETWORK, DONE, SKIPPED, FAILED, CANCELLED }
+    val isActive: Boolean get() = this == EXPANDING || this == QUEUED || this == RUNNING || this == PAUSED
 
-/** One per "Start download" tap (screens 4, 5, 7). */
-@Entity(tableName = "download_batch", indices = [Index(value = ["rootFolderId"])])
+    companion object {
+        val ACTIVE = listOf(EXPANDING, QUEUED, RUNNING, PAUSED)
+    }
+}
+
+/** Why a batch is PAUSED; all are resumable once fixed. */
+enum class PauseReason { USER, STORAGE_FULL, DESTINATION_REVOKED, NEEDS_CONSENT, AUTH, SYSTEM }
+
+enum class TaskState { QUEUED, RUNNING, DONE, SKIPPED, FAILED, CANCELLED }
+
+/** Saved with a FAILED/SKIPPED task so history can say why. */
+enum class FailureReason { NOT_FOUND, CANNOT_DOWNLOAD, GOOGLE_DOC, AUTH, CHECKSUM, RETRIES_EXHAUSTED, FORBIDDEN, EXISTS, OTHER }
+
+/** One per "Start download" (screens 4, 5, 7). */
+@Entity(tableName = "download_batch", indices = [Index(value = ["state"])])
 data class DownloadBatchEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val rootFolderId: String,
+    val rootName: String,
     val destTreeUri: String,
     val keepStructure: Boolean,
     val wifiOnly: Boolean,
     val skipExisting: Boolean,
-    val parallelism: Int,
-    val totalBytes: Long,
-    val totalFiles: Int,
     val state: BatchState,
+    val pauseReason: PauseReason? = null,
+    val message: String? = null,
+    val totalBytes: Long = 0,
+    val totalFiles: Int = 0,
+    val skippedFiles: Int = 0,
+    val duplicatesRemoved: Int = 0,
     val createdAt: Long,
-    val finishedAt: Long?,
+    val startedAt: Long? = null,
+    val finishedAt: Long? = null,
 )
 
-/** A top-level pick inside a batch (an album folder or a single file). */
+/** A top-level pick inside a batch (the linked root, an album folder, a single file or a shortcut). */
 @Entity(
     tableName = "download_item",
     foreignKeys = [ForeignKey(entity = DownloadBatchEntity::class, parentColumns = ["id"], childColumns = ["batchId"], onDelete = ForeignKey.CASCADE)],
@@ -94,51 +126,59 @@ data class DownloadBatchEntity(
 data class DownloadItemEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val batchId: Long,
+    /** The picked item's own id (shortcut id for shortcuts) = selection key. */
     val nodeId: String,
     val name: String,
-    val isFolder: Boolean,
-    val totalBytes: Long,
-    val fileCount: Int,
+    val mimeType: String,
+    val resourceKey: String?,
+    val targetId: String?,
+    val targetMimeType: String?,
+    val targetResourceKey: String?,
+    val size: Long?,
+    val md5: String?,
+    val modifiedTime: Long,
+    val canDownload: Boolean,
+    /** Folder names from the linked root to the pick's parent (root excluded). */
+    val parentNames: List<String>,
     val sortOrder: Int,
 )
 
-/** One row per file: the resume point and retry target. */
+/** One row per file: resume point (bytesDone + tempName) and retry target. (batchId, fileId) is unique = DB-level dedup. */
 @Entity(
     tableName = "file_task",
-    foreignKeys = [
-        ForeignKey(entity = DownloadBatchEntity::class, parentColumns = ["id"], childColumns = ["batchId"], onDelete = ForeignKey.CASCADE),
-        ForeignKey(entity = DownloadItemEntity::class, parentColumns = ["id"], childColumns = ["itemId"], onDelete = ForeignKey.CASCADE),
-    ],
-    indices = [Index(value = ["batchId", "state"]), Index(value = ["itemId"])],
+    foreignKeys = [ForeignKey(entity = DownloadBatchEntity::class, parentColumns = ["id"], childColumns = ["batchId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index(value = ["batchId", "state"]), Index(value = ["batchId", "fileId"], unique = true)],
 )
 data class FileTaskEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val batchId: Long,
-    val itemId: Long,
+    val sourceKey: String,
     val fileId: String,
     val resourceKey: String?,
-    val relPath: String,
-    val size: Long,
+    val dirSegments: List<String>,
+    val plannedName: String,
+    val finalName: String? = null,
+    val tempName: String? = null,
+    val size: Long?,
     val md5: String?,
     val modifiedTime: Long,
+    val viaShortcut: Boolean = false,
     val bytesDone: Long = 0,
     val state: TaskState = TaskState.QUEUED,
     val attempts: Int = 0,
-    val errorCode: Int? = null,
-    val errorReason: String? = null,
+    val errorReason: FailureReason? = null,
     val errorMessage: String? = null,
-    val partUri: String? = null,
     val finalUri: String? = null,
     val startedAt: Long? = null,
     val finishedAt: Long? = null,
 )
 
-/** Aggregate row for per-item progress (screen 5). */
-data class ItemProgress(
-    val itemId: Long,
+/** Totals for the progress UI / notification. */
+data class BatchTotals(
     val totalBytes: Long,
     val doneBytes: Long,
-    val fileCount: Int,
+    val totalFiles: Int,
     val doneFiles: Int,
     val failedFiles: Int,
+    val skippedFiles: Int,
 )

@@ -20,7 +20,7 @@ data class PlannedFile(
 )
 
 enum class SkipReason { GOOGLE_DOC, CANNOT_DOWNLOAD }
-data class SkippedFile(val name: String, val dirSegments: List<String>, val reason: SkipReason, val sourceKey: String)
+data class SkippedFile(val name: String, val dirSegments: List<String>, val reason: SkipReason, val sourceKey: String, val fileId: String)
 
 data class ExpansionResult(
     val files: List<PlannedFile>,
@@ -64,13 +64,13 @@ class SelectionExpander(private val drive: DriveRepository) {
         suspend fun addFile(item: DriveItem, dirs: List<String>, sourceKey: String, via: Boolean) {
             val viaHere = via || item.isShortcut
             when {
-                item.isGoogleDoc -> skipped += SkippedFile(item.name, dirs, SkipReason.GOOGLE_DOC, sourceKey)
-                !item.canDownload -> skipped += SkippedFile(item.name, dirs, SkipReason.CANNOT_DOWNLOAD, sourceKey)
+                item.isGoogleDoc -> skipped += SkippedFile(item.name, dirs, SkipReason.GOOGLE_DOC, sourceKey, item.targetId)
+                !item.canDownload -> skipped += SkippedFile(item.name, dirs, SkipReason.CANNOT_DOWNLOAD, sourceKey, item.targetId)
                 else -> {
                     // A shortcut doesn't carry its target's size/md5: ask once.
                     val target = if (item.isShortcut) drive.fileMetadata(item.targetId, item.targetResourceKey) else item
-                    if (target.isGoogleDoc) { skipped += SkippedFile(item.name, dirs, SkipReason.GOOGLE_DOC, sourceKey); return }
-                    if (!target.canDownload) { skipped += SkippedFile(item.name, dirs, SkipReason.CANNOT_DOWNLOAD, sourceKey); return }
+                    if (target.isGoogleDoc) { skipped += SkippedFile(item.name, dirs, SkipReason.GOOGLE_DOC, sourceKey, item.targetId); return }
+                    if (!target.canDownload) { skipped += SkippedFile(item.name, dirs, SkipReason.CANNOT_DOWNLOAD, sourceKey, item.targetId); return }
                     candidates += Candidate(
                         PlannedFile(item.targetId, item.targetResourceKey, dirs, item.name, RemoteFingerprint.of(target), sourceKey, viaHere),
                         depth = dirs.size, order = candidates.size,

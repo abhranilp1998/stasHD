@@ -72,52 +72,90 @@ interface DriveNodeDao {
     suspend fun pruneOrphans(): Int
 }
 
+class ActiveBatchExists(val batchId: Long) : IllegalStateException("A download batch is already active (#$batchId). Finish, pause-and-cancel, or resume it first.")
+
 @Dao
 interface DownloadDao {
-    @Insert suspend fun insertBatch(batch: DownloadBatchEntity): Long
-    @Insert suspend fun insertItem(item: DownloadItemEntity): Long
-    @Insert suspend fun insertTasks(tasks: List<FileTaskEntity>)
+    @Insert suspend fun insertBatchRow(batch: DownloadBatchEntity): Long
+    @Insert suspend fun insertItems(items: List<DownloadItemEntity>)
+    @Insert(onConflict = androidx.room.OnConflictStrategy.IGNORE) suspend fun insertTasks(tasks: List<FileTaskEntity>): List<Long>
 
-    @Query("SELECT * FROM download_batch WHERE id = :id")
-    fun batch(id: Long): Flow<DownloadBatchEntity?>
+    @Query("SELECT id FROM download_batch WHERE state IN ('EXPANDING','QUEUED','RUNNING','PAUSED') ORDER BY id LIMIT 1")
+    suspend fun activeBatchId(): Long?
 
-    @Query("SELECT * FROM download_batch ORDER BY createdAt DESC")
-    fun history(): Flow<List<DownloadBatchEntity>>
+    /** Creates a batch + its picks. Enforces ONE active batch atomically (check and insert in one transaction). */
+    @Transaction
+    suspend fun createBatch(batch: DownloadBatchEntity, items: List<DownloadItemEntity>): Long {
+        activeBatchId()?.let { throw ActiveBatchExists(it) }
+        val id = insertBatchRow(batch)
+        insertItems(items.map { it.copy(batchId = id) })
+        return id
+    }
 
-    @Query("SELECT * FROM download_item WHERE batchId = :batchId ORDER BY sortOrder")
-    fun items(batchId: Long): Flow<List<DownloadItemEntity>>
+    @Query("SELECT * FROM download_batch WHERE id = :id") suspend fun batchOnce(id: Long): DownloadBatchEntity?
+    @Query("SELECT * FROM download_batch WHERE id = :id") fun batch(id: Long): Flow<DownloadBatchEntity?>
+    @Query("SELECT * FROM download_batch WHERE state IN ('EXPANDING','QUEUED','RUNNING','PAUSED') ORDER BY id LIMIT 1")
+    fun activeBatch(): Flow<DownloadBatchEntity?>
+    @Query("SELECT * FROM download_batch ORDER BY createdAt DESC") fun history(): Flow<List<DownloadBatchEntity>>
+    @Query("SELECT * FROM download_item WHERE batchId = :batchId ORDER BY sortOrder") suspend fun items(batchId: Long): List<DownloadItemEntity>
 
-    @Query("SELECT * FROM file_task WHERE batchId = :batchId AND state IN (:states) ORDER BY id")
-    suspend fun tasksIn(batchId: Long, states: List<TaskState>): List<FileTaskEntity>
-
-    @Query("SELECT * FROM file_task WHERE batchId = :batchId AND state = 'FAILED'")
-    fun failed(batchId: Long): Flow<List<FileTaskEntity>>
+    @Query("SELECT * FROM file_task WHERE batchId = :batchId AND state IN ('QUEUED','RUNNING') ORDER BY id")
+    suspend fun runnableTasks(batchId: Long): List<FileTaskEntity>
+    @Query("SELECT * FROM file_task WHERE batchId = :batchId ORDER BY id") suspend fun tasks(batchId: Long): List<FileTaskEntity>
+    @Query("SELECT * FROM file_task WHERE id = :id") suspend fun task(id: Long): FileTaskEntity?
+    @Query("SELECT * FROM file_task WHERE batchId = :batchId AND state = 'FAILED'") fun failed(batchId: Long): Flow<List<FileTaskEntity>>
+    @Query("SELECT * FROM file_task WHERE batchId = :batchId AND tempName IS NOT NULL AND state NOT IN ('DONE','SKIPPED')")
+    suspend fun tasksWithPartials(batchId: Long): List<FileTaskEntity>
 
     @Query(
         """
-        SELECT itemId,
-               SUM(size) AS totalBytes,
-               SUM(bytesDone) AS doneBytes,
-               COUNT(*) AS fileCount,
-               SUM(CASE WHEN state = 'DONE' OR state = 'SKIPPED' THEN 1 ELSE 0 END) AS doneFiles,
-               SUM(CASE WHEN state = 'FAILED' THEN 1 ELSE 0 END) AS failedFiles
-        FROM file_task WHERE batchId = :batchId GROUP BY itemId
+        SELECT COALESCE(SUM(CASE WHEN state != 'SKIPPED' THEN COALESCE(size, 0) ELSE 0 END), 0) AS totalBytes,
+               COALESCE(SUM(CASE WHEN state = 'DONE' THEN COALESCE(size, bytesDone) WHEN state IN ('QUEUED','RUNNING') THEN bytesDone ELSE 0 END), 0) AS doneBytes,
+               COUNT(*) AS totalFiles,
+               COALESCE(SUM(CASE WHEN state = 'DONE' THEN 1 ELSE 0 END), 0) AS doneFiles,
+               COALESCE(SUM(CASE WHEN state = 'FAILED' THEN 1 ELSE 0 END), 0) AS failedFiles,
+               COALESCE(SUM(CASE WHEN state = 'SKIPPED' THEN 1 ELSE 0 END), 0) AS skippedFiles
+        FROM file_task WHERE batchId = :batchId
         """
     )
-    fun itemProgress(batchId: Long): Flow<List<ItemProgress>>
+    fun totals(batchId: Long): Flow<BatchTotals>
 
-    /** Called by the ProgressBus flush, about once a second, inside one transaction. */
-    @Query("UPDATE file_task SET bytesDone = :bytesDone WHERE id = :taskId")
-    suspend fun updateBytes(taskId: Long, bytesDone: Long)
+    @Query("UPDATE file_task SET bytesDone = :bytes WHERE id = :taskId") suspend fun setBytes(taskId: Long, bytes: Long)
+    @Query("UPDATE file_task SET finalName = :finalName, tempName = :tempName WHERE id = :taskId")
+    suspend fun claimNames(taskId: Long, finalName: String, tempName: String)
+    @Query("UPDATE file_task SET size = :size, md5 = :md5, modifiedTime = :modified, bytesDone = 0 WHERE id = :taskId")
+    suspend fun remoteChanged(taskId: Long, size: Long?, md5: String?, modified: Long)
+    @Query("UPDATE file_task SET state = 'RUNNING', startedAt = COALESCE(startedAt, :now) WHERE id = :taskId")
+    suspend fun markRunning(taskId: Long, now: Long)
+    /** A failed attempt (retryable); the message is kept so the UI can show "retrying: ...". */
+    @Query("UPDATE file_task SET attempts = attempts + 1, errorMessage = :message WHERE id = :taskId")
+    suspend fun recordAttempt(taskId: Long, message: String?)
+    @Query("UPDATE file_task SET state = 'QUEUED' WHERE id = :taskId") suspend fun requeue(taskId: Long)
+    @Query("UPDATE file_task SET state = 'QUEUED' WHERE batchId = :batchId AND state = 'RUNNING'") suspend fun requeueRunning(batchId: Long)
+    @Query("UPDATE file_task SET state = 'DONE', finalName = :finalName, finalUri = :uri, bytesDone = :bytes, finishedAt = :now, errorReason = NULL, errorMessage = NULL WHERE id = :taskId")
+    suspend fun markDone(taskId: Long, finalName: String, uri: String, bytes: Long, now: Long)
+    @Query("UPDATE file_task SET state = 'SKIPPED', errorReason = :reason, errorMessage = :message, finishedAt = :now WHERE id = :taskId")
+    suspend fun markSkipped(taskId: Long, reason: FailureReason, message: String?, now: Long)
+    @Query("UPDATE file_task SET state = 'FAILED', errorReason = :reason, errorMessage = :message, finishedAt = :now WHERE id = :taskId")
+    suspend fun markFailed(taskId: Long, reason: FailureReason, message: String?, now: Long)
+    @Query("UPDATE file_task SET state = 'CANCELLED', tempName = NULL, bytesDone = 0 WHERE batchId = :batchId AND state NOT IN ('DONE','SKIPPED','FAILED')")
+    suspend fun cancelOpenTasks(batchId: Long)
+    @Query("UPDATE file_task SET state = 'QUEUED', attempts = 0, errorReason = NULL, errorMessage = NULL, finishedAt = NULL WHERE batchId = :batchId AND state = 'FAILED'")
+    suspend fun requeueFailed(batchId: Long): Int
 
+    @Query("UPDATE download_batch SET state = :state, pauseReason = :reason, message = :message WHERE id = :batchId")
+    suspend fun setBatchState(batchId: Long, state: BatchState, reason: PauseReason? = null, message: String? = null)
+    @Query("UPDATE download_batch SET state = :state, pauseReason = NULL, message = :message, finishedAt = :at WHERE id = :batchId")
+    suspend fun finishBatch(batchId: Long, state: BatchState, message: String?, at: Long)
+    @Query("UPDATE download_batch SET startedAt = COALESCE(startedAt, :now) WHERE id = :batchId") suspend fun markStarted(batchId: Long, now: Long)
+    @Query("UPDATE download_batch SET totalBytes = :bytes, totalFiles = :files, skippedFiles = :skipped, duplicatesRemoved = :dups WHERE id = :batchId")
+    suspend fun setPlanTotals(batchId: Long, bytes: Long, files: Int, skipped: Int, dups: Int)
+
+    /** Expansion result lands atomically: tasks inserted and batch moved EXPANDING -> QUEUED. */
     @Transaction
-    suspend fun flushBytes(progress: Map<Long, Long>) {
-        progress.forEach { (taskId, bytes) -> updateBytes(taskId, bytes) }
+    suspend fun savePlan(batchId: Long, tasks: List<FileTaskEntity>, bytes: Long, files: Int, skipped: Int, dups: Int) {
+        insertTasks(tasks)
+        setPlanTotals(batchId, bytes, files, skipped, dups)
+        setBatchState(batchId, BatchState.QUEUED)
     }
-
-    @Query("UPDATE file_task SET state = :state, errorCode = :code, errorReason = :reason, errorMessage = :message, finishedAt = :at WHERE id = :taskId")
-    suspend fun setTaskState(taskId: Long, state: TaskState, code: Int?, reason: String?, message: String?, at: Long?)
-
-    @Query("UPDATE download_batch SET state = :state, finishedAt = :finishedAt WHERE id = :batchId")
-    suspend fun setBatchState(batchId: Long, state: BatchState, finishedAt: Long?)
 }
