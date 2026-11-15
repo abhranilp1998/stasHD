@@ -23,6 +23,9 @@ class DriveApiConfig(val baseUrl: HttpUrl = DEFAULT_BASE_URL.toHttpUrl()) {
 }
 
 /**
+ * TODO(cloud-setup): only instantiated when a Web client ID is configured (see AppModule.driveRepository);
+ *   verified against MockWebServer only until then.
+ *
  * Drive REST v3 over OkHttp.
  * - Token from [TokenProvider] on every call, never stored here; on 401 the token is cleared and the call retried once.
  * - Resource keys go in [ResourceKeys.HEADER] for the folder being listed / item being fetched.

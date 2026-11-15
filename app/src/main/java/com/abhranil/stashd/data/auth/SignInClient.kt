@@ -30,6 +30,8 @@ class SignInClient @Inject constructor(@param:ApplicationContext private val app
     /** Must be called with an Activity context; shows the Sign in with Google sheet. */
     suspend fun signIn(activityContext: Context): SignedInAccount {
         check(isConfigured) { "WEB_CLIENT_ID is empty. See SETUP.md." }
+        // TODO(cloud-setup): needs the WEB client ID (not the Android one) as serverClientId; DEVELOPER_ERROR here
+        //   usually means the Android client's package/SHA-1 doesn't match this build.
         val option = GetSignInWithGoogleOption.Builder(BuildConfig.WEB_CLIENT_ID).build()
         val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
         val response = try {

@@ -19,8 +19,12 @@ android {
         versionCode = 2
         versionName = "0.2.0-m1a"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // Web OAuth client ID for Sign in with Google. Set stashd.webClientId in ~/.gradle/gradle.properties (see SETUP.md).
-        val webClientId = (project.findProperty("stashd.webClientId") as String?) ?: ""
+        // TODO(cloud-setup): Web OAuth client ID. Empty placeholder = demo mode. Set stashd.webClientId in
+        //   ~/.gradle/gradle.properties (never in the repo); it becomes BuildConfig.WEB_CLIENT_ID.
+        // TODO(cloud-setup): the Android OAuth client must list package com.abhranil.stashd + the SHA-1 of the
+        //   keystore that signs THIS build (debug: ~/.android/debug.keystore on the building machine).
+        //   Get it with `./gradlew signingReport` (Variant: debug → SHA1). Each build machine needs its own entry.
+        val webClientId = (project.findProperty("stashd.webClientId") as String?)?.trim() ?: ""
         buildConfigField("String", "WEB_CLIENT_ID", "\"$webClientId\"")
         // Debug aid: stashd.fakeDrive=true forces the sample-data repository even when a client ID is set.
         val fakeDrive = (project.findProperty("stashd.fakeDrive") as String?)?.toBoolean() ?: false

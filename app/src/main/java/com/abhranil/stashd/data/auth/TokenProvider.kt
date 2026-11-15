@@ -103,6 +103,7 @@ class GoogleTokenProvider(
     }
 
     override suspend fun authorize(): AuthorizationOutcome {
+        // TODO(cloud-setup): demo mode grants without Google; the real consent flow below runs once a client ID is set.
         if (DriveMode.useFake) return AuthorizationOutcome.Granted
         return try {
             token()

@@ -45,6 +45,24 @@ For reference, the build box's key (only valid for APKs built on the box) is:
    ```
 7. Rebuild. Welcome → **Sign in with Google** now uses Credential Manager, then asks for Drive read access through AuthorizationClient.
 
+## Cloud setup TODOs
+Every place that needs real Google credentials is marked `TODO(cloud-setup)`. List them:
+```
+git grep -n "TODO(cloud-setup)" -- ':!SETUP.md'
+# or: rg -n "TODO\(cloud-setup\)" -g '!SETUP.md'
+```
+| Where | What you do | Without it |
+|---|---|---|
+| `gradle.properties` | Nothing in the repo; put `stashd.webClientId=…` in **~/.gradle/gradle.properties** | Demo mode |
+| `app/build.gradle.kts` (webClientId) | Web client ID → `BuildConfig.WEB_CLIENT_ID` | Empty placeholder = demo mode |
+| `app/build.gradle.kts` (SHA-1 note) | Android OAuth client: `com.abhranil.stashd` + SHA-1 from `./gradlew signingReport` on each build machine | Sign-in fails with DEVELOPER_ERROR |
+| `data/drive/DriveMode.kt` | Nothing; flips automatically when the ID is set | `useFake = true` |
+| `di/AppModule.kt` (driveRepository) | Nothing; selects `RealDriveRepository` once configured | `FakeDriveRepository` |
+| `data/auth/SignInClient.kt` | Uses the **Web** client ID as serverClientId | Sign-in skipped |
+| `data/auth/AuthorizationBackend.kt` | Live AuthorizationClient path: Drive API on, consent screen (Testing, drive.readonly, you as test user) | Not called |
+| `data/auth/TokenProvider.kt` | Nothing; demo short-circuit ends when configured | Grants without Google |
+| `data/drive/RealDriveRepository.kt` | Nothing; first live run = SETUP §5 checklist | MockWebServer-tested only |
+
 ## 4. What's real vs stubbed (M1a)
 | Area | Status |
 |---|---|

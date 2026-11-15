@@ -36,6 +36,11 @@ interface SelectedAccount {
     suspend fun email(): String?
 }
 
+/**
+ * TODO(cloud-setup): live path, untested until the Cloud project exists: Drive API enabled, consent screen in
+ *   Testing with scope drive.readonly and you as a test user, Android OAuth client (package + SHA-1).
+ *   Not used in demo mode (GoogleTokenProvider.authorize short-circuits).
+ */
 @Singleton
 class PlayAuthorizationBackend @Inject constructor(
     @param:ApplicationContext private val context: Context,

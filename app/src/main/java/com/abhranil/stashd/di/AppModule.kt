@@ -70,6 +70,8 @@ object AppModule {
      * Real Drive when a Web client ID is configured; sample data otherwise (or when a debug build sets
      * stashd.fakeDrive=true). Both are lazy so the unused one is never constructed.
      */
+    // TODO(cloud-setup): RealDriveRepository is selected only when DriveMode.useFake is false (Web client ID set).
+    //   Until then FakeDriveRepository serves sample data; force it anyway with stashd.fakeDrive=true.
     @Provides @Singleton
     fun driveRepository(real: Provider<RealDriveRepository>, fake: Provider<FakeDriveRepository>): DriveRepository =
         if (DriveMode.useFake) fake.get() else real.get()
