@@ -53,8 +53,8 @@ interface FileJobListener {
     suspend fun namesClaimed(finalName: String, tempName: String)
     /** The remote file changed since planning; the partial was discarded and these are the new expectations. */
     suspend fun remoteChanged(now: RemoteFingerprint)
-    /** Hot path: bytes in the temp file so far. The runner throttles persistence. */
-    fun progress(bytesDone: Long)
+    /** Hot path (per 256 KB chunk): bytes in the temp file so far. The runner throttles persistence. */
+    suspend fun progress(bytesDone: Long)
 }
 
 class ChecksumMismatch(val expected: String, val actual: String) : IOException("Checksum mismatch (expected $expected, got $actual)")

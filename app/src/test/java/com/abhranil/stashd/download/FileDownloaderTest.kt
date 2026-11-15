@@ -53,7 +53,7 @@ class FileDownloaderTest {
         var last = -1L
         override suspend fun namesClaimed(finalName: String, tempName: String) { names = finalName to tempName }
         override suspend fun remoteChanged(now: RemoteFingerprint) { changed = now }
-        override fun progress(bytesDone: Long) { last = bytesDone }
+        override suspend fun progress(bytesDone: Long) { last = bytesDone }
     }
 
     @Before fun setUp() {

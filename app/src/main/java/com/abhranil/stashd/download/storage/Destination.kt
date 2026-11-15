@@ -15,7 +15,7 @@ sealed class StorageError(message: String, cause: Throwable? = null) : IOExcepti
 
 /**
  * Where a batch writes. Scheduler- and Android-agnostic so the downloader is unit-testable:
- * [SafDestination] is the real one (Storage Access Framework tree), [FileTreeDestination] a plain directory.
+ * [SafDestination] is the real one (Storage Access Framework tree), FileTreeDestination (test sources) a plain directory.
  */
 interface Destination {
     /** Throws [StorageError.AccessRevoked] when the destination is no longer writable. */
