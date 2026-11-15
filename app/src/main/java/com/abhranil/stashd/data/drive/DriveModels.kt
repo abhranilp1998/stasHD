@@ -40,13 +40,14 @@ data class DriveItem(
     }
 }
 
-/** Progress of the recursive folder walk (screen 3 shows "Scanning… 412 files"). */
-data class WalkProgress(val foldersScanned: Int, val filesFound: Int, val bytesFound: Long, val done: Boolean)
-
-/** An open media stream for one file. [offset] is where the body starts (206 resumes, 200 restarts at 0). */
+/**
+ * An open media stream for one file. [offset] is where the body starts: equal to the requested byte for a
+ * validated 206, or 0 when the server ignored Range (200) and the caller must restart the file.
+ */
 interface DriveDownload : AutoCloseable {
     val offset: Long
-    val contentLength: Long
+    /** Full file size from Content-Range / Content-Length, when the server said. */
+    val totalSize: Long?
     val source: okio.BufferedSource
 }
 
@@ -70,6 +71,12 @@ sealed class DriveError(message: String) : Exception(message) {
     class NotDownloadable(id: String) : DriveError("Google Docs file needs export: $id")
     class Server(val code: Int) : DriveError("Drive server error $code")
     class NotAFolder(val item: DriveItem) : DriveError("That link is a file, not a folder")
+    /** Owner disabled downloads, or Drive flagged the file (cannotDownloadFile / abuse). */
+    class CannotDownload(val reason: String) : DriveError("Drive won't let this file be downloaded ($reason)")
+    /** 416: the requested start is past the end. [totalSize] from `Content-Range: bytes * /N`. */
+    class RangeNotSatisfiable(val totalSize: Long?) : DriveError("Requested range not satisfiable")
+    /** 206 whose Content-Range doesn't start where we asked. */
+    class RangeMismatch(val requested: Long, val got: String?) : DriveError("Server resumed at the wrong offset ($got, wanted $requested)")
 }
 
 /**

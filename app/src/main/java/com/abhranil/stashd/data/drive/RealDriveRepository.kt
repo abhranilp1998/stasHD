@@ -1,7 +1,6 @@
 package com.abhranil.stashd.data.drive
 
 import com.abhranil.stashd.data.auth.TokenProvider
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import okhttp3.Call
@@ -72,29 +71,73 @@ class RealDriveRepository @Inject constructor(
         }
     }
 
-    override fun walk(rootFolderId: String, resourceKey: String?): Flow<WalkProgress> =
-        throw NotImplementedError("Recursive expansion is M2.")
+    override suspend fun fileMetadata(fileId: String, resourceKey: String?): DriveItem {
+        requireValidId(fileId)
+        val url = config.baseUrl.newBuilder().addPathSegment("files").addPathSegment(fileId)
+            .addQueryParameter("fields", FILE_FIELDS)
+            .addQueryParameter("supportsAllDrives", "true")
+            .build()
+        return get(url, ResourceKeys.header(fileId to resourceKey), fileId) { json.decodeFromString<FileJson>(it).toItem() }
+    }
 
-    override suspend fun openDownload(fileId: String, resourceKey: String?, fromByte: Long): DriveDownload =
-        throw NotImplementedError("Downloader is M2.")
+    override suspend fun openDownload(fileId: String, resourceKey: String?, fromByte: Long): DriveDownload {
+        requireValidId(fileId)
+        val url = config.baseUrl.newBuilder().addPathSegment("files").addPathSegment(fileId)
+            .addQueryParameter("alt", "media")
+            .addQueryParameter("supportsAllDrives", "true")
+            .build()
+        val response = execute(url, ResourceKeys.header(fileId to resourceKey)) {
+            // identity: no transparent gzip, so byte offsets and Content-Length mean what they say.
+            header("Accept-Encoding", "identity")
+            if (fromByte > 0) header("Range", "bytes=$fromByte-")
+        }
+        try {
+            when (response.code) {
+                206 -> {
+                    val cr = response.header("Content-Range")
+                    val m = cr?.let(CONTENT_RANGE::matchEntire)
+                    val start = m?.groupValues?.get(1)?.toLongOrNull()
+                    if (start != fromByte) throw DriveError.RangeMismatch(fromByte, cr)
+                    return Download(response, start, m.groupValues[3].toLongOrNull())
+                }
+                200 -> return Download(response, 0L, response.body?.contentLength()?.takeIf { it >= 0 })
+                416 -> throw DriveError.RangeNotSatisfiable(response.header("Content-Range")?.substringAfter('/')?.toLongOrNull())
+                else -> throw errorFor(response, fileId)
+            }
+        } catch (e: Throwable) {
+            response.close()
+            throw e
+        }
+    }
 
-    private suspend fun <T> get(url: HttpUrl, resourceKeyHeader: String?, id: String, parse: (String) -> T): T {
+    private class Download(private val response: Response, override val offset: Long, override val totalSize: Long?) : DriveDownload {
+        override val source = response.body!!.source()
+        override fun close() = response.close()
+    }
+
+    private suspend fun <T> get(url: HttpUrl, resourceKeyHeader: String?, id: String, parse: (String) -> T): T =
+        execute(url, resourceKeyHeader).use { response ->
+            if (!response.isSuccessful) throw errorFor(response, id)
+            parse(response.body?.string().orEmpty())
+        }
+
+    /** Authorized request; on 401 clears the token and retries once. Returns an OPEN response (caller closes). */
+    private suspend fun execute(url: HttpUrl, resourceKeyHeader: String?, extra: Request.Builder.() -> Unit = {}): Response {
         var token = tokens.token()
         for (attempt in 0..1) {
             val request = Request.Builder().url(url)
                 .header("Authorization", "Bearer $token")
                 .apply { if (resourceKeyHeader != null) header(ResourceKeys.HEADER, resourceKeyHeader) }
+                .apply(extra)
                 .build()
-            client.newCall(request).await().use { response ->
-                if (response.code == 401 && attempt == 0) {
-                    tokens.invalidate(token)
-                    token = tokens.token()
-                } else if (!response.isSuccessful) {
-                    throw errorFor(response, id)
-                } else {
-                    return parse(response.body?.string().orEmpty())
-                }
+            val response = client.newCall(request).await()
+            if (response.code == 401 && attempt == 0) {
+                response.close()
+                tokens.invalidate(token)
+                token = tokens.token()
+                continue
             }
+            return response
         }
         throw DriveError.Unauthorized()
     }
@@ -108,6 +151,8 @@ class RealDriveRepository @Inject constructor(
             response.code == 404 -> DriveError.NotFound(id)
             response.code == 429 -> DriveError.RateLimited(retryAfter)
             response.code == 403 && reason in RATE_REASONS -> DriveError.RateLimited(retryAfter)
+            response.code == 403 && reason == "fileNotDownloadable" -> DriveError.NotDownloadable(id)
+            response.code == 403 && reason in CANNOT_DOWNLOAD_REASONS -> DriveError.CannotDownload(reason)
             response.code == 403 -> DriveError.Forbidden(reason, body?.message.orEmpty())
             response.code == 400 -> DriveError.BadRequest(body?.message.orEmpty())
             else -> DriveError.Server(response.code)
@@ -122,6 +167,8 @@ class RealDriveRepository @Inject constructor(
     companion object {
         private val ID = Regex("^[A-Za-z0-9_-]{1,200}$")
         private val RATE_REASONS = setOf("rateLimitExceeded", "userRateLimitExceeded")
+        private val CANNOT_DOWNLOAD_REASONS = setOf("cannotDownloadFile", "cannotDownloadAbusiveFile", "downloadQuotaExceeded")
+        private val CONTENT_RANGE = Regex("""bytes (\d+)-(\d+)/(\d+|\*)""")
     }
 }
 

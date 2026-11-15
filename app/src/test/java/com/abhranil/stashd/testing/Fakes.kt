@@ -10,8 +10,6 @@ import com.abhranil.stashd.data.drive.DriveLink
 import com.abhranil.stashd.data.drive.DrivePage
 import com.abhranil.stashd.data.drive.DriveRepository
 import com.abhranil.stashd.data.drive.FolderCache
-import com.abhranil.stashd.data.drive.WalkProgress
-import kotlinx.coroutines.flow.Flow
 
 fun folder(id: String, rk: String? = null) = DriveItem(id, "Folder $id", DriveItem.MIME_FOLDER, null, null, rk, 0L, true)
 fun file(id: String, size: Long = 100) = DriveItem(id, "$id.flac", "audio/flac", size, null, null, 0L, true)
@@ -36,7 +34,7 @@ class ScriptedDrive : DriveRepository {
         return DrivePage(p[i], if (i + 1 < p.size) "p${i + 1}" else null, i in incompletePages[folderId].orEmpty())
     }
 
-    override fun walk(rootFolderId: String, resourceKey: String?): Flow<WalkProgress> = throw NotImplementedError()
+    override suspend fun fileMetadata(fileId: String, resourceKey: String?): DriveItem = throw NotImplementedError()
     override suspend fun openDownload(fileId: String, resourceKey: String?, fromByte: Long): DriveDownload = throw NotImplementedError()
 }
 

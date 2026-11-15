@@ -1,7 +1,5 @@
 package com.abhranil.stashd.data.drive
 
-import kotlinx.coroutines.flow.Flow
-
 /**
  * Drive REST v3 access. [RealDriveRepository] (OkHttp) is used when a Web client ID is configured;
  * [FakeDriveRepository] serves sample data otherwise. Every call carries the item's resource key, if any.
@@ -31,10 +29,13 @@ interface DriveRepository {
         return FolderListing(all, token, incomplete)
     }
 
-    /** Recursive BFS walk of a folder; caches the tree in Room and emits progress. */
-    fun walk(rootFolderId: String, resourceKey: String?): Flow<WalkProgress>
+    /** Fresh metadata for one file (size, md5Checksum, modifiedTime, canDownload); does not follow shortcuts. */
+    suspend fun fileMetadata(fileId: String, resourceKey: String?): DriveItem
 
-    /** GET files/{id}?alt=media, with `Range: bytes=fromByte-` when fromByte > 0. */
+    /**
+     * GET files/{id}?alt=media, with `Range: bytes=fromByte-` when fromByte > 0. A 206 is validated against
+     * Content-Range ([DriveError.RangeMismatch]); a 200 comes back with offset 0; 416 is [DriveError.RangeNotSatisfiable].
+     */
     suspend fun openDownload(fileId: String, resourceKey: String?, fromByte: Long): DriveDownload
 
     companion object {
