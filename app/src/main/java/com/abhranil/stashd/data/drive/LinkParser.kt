@@ -1,6 +1,7 @@
 package com.abhranil.stashd.data.drive
 
 import java.net.URI
+import java.net.URLDecoder
 
 /**
  * Parses the Drive link shapes users paste:
@@ -20,7 +21,8 @@ object LinkParser {
             val i = it.indexOf('=')
             if (i <= 0) null else it.substring(0, i) to it.substring(i + 1)
         }.toMap()
-        val resourceKey = query["resourcekey"]?.takeIf { it.isNotBlank() }
+        val resourceKey = query["resourcekey"]?.let { runCatching { URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) }
+            ?.trim()?.takeIf { it.isNotBlank() }
         val segments = uri.path.orEmpty().split('/').filter { it.isNotEmpty() }
 
         val folderIdx = segments.indexOf("folders")

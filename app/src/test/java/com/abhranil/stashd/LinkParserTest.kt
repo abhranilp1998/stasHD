@@ -40,3 +40,24 @@ class LinkParserTest {
         assertEquals("a (2).flac", NameSanitizer.dedupe("a.flac", setOf("a.flac")))
     }
 }
+
+class LinkParserResourceKeyTest {
+    @Test fun resourceKeyAfterOtherParams() {
+        val l = LinkParser.parse("https://drive.google.com/drive/folders/0B1234567890abcdEFG?usp=sharing&resourcekey=0-XyZ123")!!
+        assertEquals("0-XyZ123", l.resourceKey)
+    }
+
+    @Test fun resourceKeyIsUrlDecoded() {
+        assertEquals("0-a/b", LinkParser.parse("https://drive.google.com/file/d/1AbCdEfGhIjKlMnOp/view?resourcekey=0-a%2Fb")!!.resourceKey)
+    }
+
+    @Test fun noResourceKeyIsNull() {
+        assertNull(LinkParser.parse("https://drive.google.com/drive/folders/1wa95llBR886wVZ-cps7XbhhDfuOtGCdU?usp=sharing")!!.resourceKey)
+        assertNull(LinkParser.parse("https://drive.google.com/drive/folders/1wa95llBR886wVZ-cps7XbhhDfuOtGCdU?resourcekey=")!!.resourceKey)
+    }
+
+    @Test fun openIdWithResourceKey() {
+        val l = LinkParser.parse("https://drive.google.com/open?id=1AbCdEfGhIjKlMnOp&resourcekey=0-k")!!
+        assertEquals("1AbCdEfGhIjKlMnOp" to "0-k", l.id to l.resourceKey)
+    }
+}
