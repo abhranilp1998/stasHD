@@ -16,16 +16,20 @@ android {
         applicationId = "com.abhranil.stashd"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-m0"
+        versionCode = 2
+        versionName = "0.2.0-m1a"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Web OAuth client ID for Sign in with Google. Set stashd.webClientId in ~/.gradle/gradle.properties (see SETUP.md).
         val webClientId = (project.findProperty("stashd.webClientId") as String?) ?: ""
         buildConfigField("String", "WEB_CLIENT_ID", "\"$webClientId\"")
+        // Debug aid: stashd.fakeDrive=true forces the sample-data repository even when a client ID is set.
+        val fakeDrive = (project.findProperty("stashd.fakeDrive") as String?)?.toBoolean() ?: false
+        buildConfigField("boolean", "FORCE_FAKE_DRIVE", fakeDrive.toString())
     }
 
     buildTypes {
         release {
+            buildConfigField("boolean", "FORCE_FAKE_DRIVE", "false")
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

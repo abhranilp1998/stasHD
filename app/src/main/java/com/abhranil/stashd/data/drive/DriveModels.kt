@@ -35,10 +35,29 @@ interface DriveDownload : AutoCloseable {
     val source: okio.BufferedSource
 }
 
+/** One files.list page. */
+data class DrivePage(val items: List<DriveItem>, val nextPageToken: String?)
+
 sealed class DriveError(message: String) : Exception(message) {
-    class NotFound(id: String) : DriveError("Not found or no access: $id")
-    class Unauthorized : DriveError("Access token rejected")
-    class RateLimited(val retryAfterMs: Long?) : DriveError("Rate limited")
+    class NotFound(val id: String) : DriveError("Not found, or this account has no access to it")
+    class Unauthorized : DriveError("Google rejected the access token")
+    class Forbidden(val reason: String, detail: String) : DriveError(detail.ifBlank { "Access denied ($reason)" })
+    class BadRequest(detail: String) : DriveError(detail.ifBlank { "Drive rejected the request" })
+    class RateLimited(val retryAfterMs: Long?) : DriveError("Drive is rate limiting requests. Try again shortly.")
     class NotDownloadable(id: String) : DriveError("Google Docs file needs export: $id")
     class Server(val code: Int) : DriveError("Drive server error $code")
+    class NotAFolder(val item: DriveItem) : DriveError("That link is a file, not a folder")
+}
+
+/**
+ * Builds the `X-Goog-Drive-Resource-Keys` header: comma-separated `fileId/resourceKey` pairs.
+ * Required for items shared by link before the 2021 security update; harmless otherwise.
+ */
+object ResourceKeys {
+    const val HEADER = "X-Goog-Drive-Resource-Keys"
+
+    fun header(vararg pairs: Pair<String, String?>): String? =
+        pairs.filter { !it.second.isNullOrBlank() }.distinctBy { it.first }
+            .joinToString(",") { "${it.first}/${it.second}" }
+            .ifEmpty { null }
 }

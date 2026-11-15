@@ -11,7 +11,9 @@ import com.abhranil.stashd.data.db.DriveNodeDao
 import com.abhranil.stashd.data.db.DriveRootDao
 import com.abhranil.stashd.data.db.StashdDatabase
 import com.abhranil.stashd.data.drive.DriveRepository
+import com.abhranil.stashd.data.drive.DriveApiConfig
 import com.abhranil.stashd.data.drive.FakeDriveRepository
+import com.abhranil.stashd.data.drive.RealDriveRepository
 import com.abhranil.stashd.data.net.HttpLogging
 import dagger.Binds
 import dagger.Module
@@ -22,6 +24,7 @@ import dagger.hilt.components.SingletonComponent
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import javax.inject.Provider
 import javax.inject.Singleton
 
 @Module
@@ -53,13 +56,26 @@ object AppModule {
     fun json(): Json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
     @Provides @Singleton
+    fun driveApiConfig(): DriveApiConfig = DriveApiConfig()
+
+    /**
+     * Real Drive when a Web client ID is configured; sample data otherwise (or when a debug build sets
+     * stashd.fakeDrive=true). Both are lazy so the unused one is never constructed.
+     */
+    @Provides @Singleton
+    fun driveRepository(real: Provider<RealDriveRepository>, fake: Provider<FakeDriveRepository>): DriveRepository =
+        if (DriveMode.useFake) fake.get() else real.get()
+
+    @Provides @Singleton
     fun workManager(@ApplicationContext context: Context): WorkManager = WorkManager.getInstance(context)
+}
+
+object DriveMode {
+    val useFake: Boolean get() = BuildConfig.WEB_CLIENT_ID.isBlank() || BuildConfig.FORCE_FAKE_DRIVE
 }
 
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class BindingsModule {
-    /** Swap for the OkHttp-backed implementation in M1/M2. */
-    @Binds abstract fun driveRepository(impl: FakeDriveRepository): DriveRepository
     @Binds abstract fun tokenProvider(impl: GoogleTokenProvider): TokenProvider
 }
