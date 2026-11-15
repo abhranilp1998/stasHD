@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.work.WorkManager
 import com.abhranil.stashd.BuildConfig
+import com.abhranil.stashd.data.auth.DriveAuthorizer
 import com.abhranil.stashd.data.auth.GoogleTokenProvider
 import com.abhranil.stashd.data.auth.TokenProvider
 import com.abhranil.stashd.data.db.DownloadDao
@@ -12,6 +13,7 @@ import com.abhranil.stashd.data.db.DriveRootDao
 import com.abhranil.stashd.data.db.StashdDatabase
 import com.abhranil.stashd.data.drive.DriveRepository
 import com.abhranil.stashd.data.drive.DriveApiConfig
+import com.abhranil.stashd.data.drive.DriveMode
 import com.abhranil.stashd.data.drive.FakeDriveRepository
 import com.abhranil.stashd.data.drive.RealDriveRepository
 import com.abhranil.stashd.data.net.HttpLogging
@@ -70,12 +72,9 @@ object AppModule {
     fun workManager(@ApplicationContext context: Context): WorkManager = WorkManager.getInstance(context)
 }
 
-object DriveMode {
-    val useFake: Boolean get() = BuildConfig.WEB_CLIENT_ID.isBlank() || BuildConfig.FORCE_FAKE_DRIVE
-}
-
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class BindingsModule {
     @Binds abstract fun tokenProvider(impl: GoogleTokenProvider): TokenProvider
+    @Binds abstract fun driveAuthorizer(impl: GoogleTokenProvider): DriveAuthorizer
 }

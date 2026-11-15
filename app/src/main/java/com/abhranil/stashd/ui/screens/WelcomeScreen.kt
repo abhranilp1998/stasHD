@@ -1,6 +1,20 @@
 package com.abhranil.stashd.ui.screens
 
 import android.app.Activity
+import android.app.PendingIntent
+import android.content.Intent
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.viewModelScope
+import com.abhranil.stashd.data.auth.AuthorizationOutcome
+import com.abhranil.stashd.data.auth.ConsentResult
+import com.abhranil.stashd.data.auth.DriveAuthorizer
+import com.abhranil.stashd.data.auth.SignInCancelledException
+import com.abhranil.stashd.ui.components.rememberConsentLauncher
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,10 +39,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,15 +57,58 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+sealed interface WelcomeState {
+    data object Idle : WelcomeState
+    data object Working : WelcomeState
+    class NeedsConsent(val pendingIntent: PendingIntent) : WelcomeState
+    class Message(val text: String, val isError: Boolean = true) : WelcomeState
+    data object Done : WelcomeState
+}
+
+/** Sign in (Credential Manager) → authorize drive.readonly (AuthorizationClient) → Home. */
 @HiltViewModel
 class AuthViewModel @Inject constructor(
     val signInClient: SignInClient,
+    private val authorizer: DriveAuthorizer,
     private val settings: SettingsStore,
 ) : ViewModel() {
-    suspend fun signIn(activity: Activity): Result<String> = runCatching {
-        val account = signInClient.signIn(activity)
-        settings.setAccount(account.email)
-        account.email
+    private val _state = MutableStateFlow<WelcomeState>(WelcomeState.Idle)
+    val state: StateFlow<WelcomeState> = _state.asStateFlow()
+
+    fun start(activity: Activity) {
+        if (_state.value == WelcomeState.Working) return
+        if (!signInClient.isConfigured) { _state.value = WelcomeState.Done; return }
+        _state.value = WelcomeState.Working
+        viewModelScope.launch {
+            try {
+                val account = signInClient.signIn(activity)
+                settings.setAccount(account.email)
+            } catch (e: SignInCancelledException) {
+                _state.value = WelcomeState.Message("Sign-in cancelled.", isError = false); return@launch
+            } catch (e: Exception) {
+                _state.value = WelcomeState.Message(e.message ?: "Sign-in failed."); return@launch
+            }
+            authorizeDrive()
+        }
+    }
+
+    private suspend fun authorizeDrive() {
+        _state.value = when (val outcome = authorizer.authorize()) {
+            AuthorizationOutcome.Granted -> WelcomeState.Done
+            is AuthorizationOutcome.NeedsConsent -> WelcomeState.NeedsConsent(outcome.pendingIntent)
+            is AuthorizationOutcome.Failed -> WelcomeState.Message(outcome.message)
+        }
+    }
+
+    /** The consent sheet is showing; avoid relaunching it on recomposition. */
+    fun consentLaunched() { _state.value = WelcomeState.Working }
+
+    fun onConsentResult(resultCode: Int, data: Intent?) {
+        _state.value = when (val r = authorizer.completeConsent(resultCode, data)) {
+            ConsentResult.Granted -> WelcomeState.Done
+            ConsentResult.Cancelled -> WelcomeState.Message("Drive access is needed to browse folders. Tap Continue to try again.", isError = false)
+            is ConsentResult.Denied -> WelcomeState.Message(r.message)
+        }
     }
 }
 
@@ -63,8 +116,15 @@ class AuthViewModel @Inject constructor(
 @Composable
 fun WelcomeScreen(onSignedIn: () -> Unit, vm: AuthViewModel = hiltViewModel()) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var error by remember { mutableStateOf<String?>(null) }
+    val state by vm.state.collectAsState()
+    val launchConsent = rememberConsentLauncher(vm::onConsentResult)
+    LaunchedEffect(state) {
+        when (val s = state) {
+            WelcomeState.Done -> onSignedIn()
+            is WelcomeState.NeedsConsent -> { vm.consentLaunched(); launchConsent(s.pendingIntent) }
+            else -> Unit
+        }
+    }
 
     Column(
         Modifier
@@ -99,19 +159,26 @@ fun WelcomeScreen(onSignedIn: () -> Unit, vm: AuthViewModel = hiltViewModel()) {
 
         Spacer(Modifier.weight(1f))
         if (!vm.signInClient.isConfigured) {
-            PlaceholderNote("M0: WEB_CLIENT_ID not set (SETUP.md). The button skips sign-in for now.")
+            PlaceholderNote("Demo mode: no Web client ID (SETUP.md). Continue opens sample data without signing in.")
             Spacer(Modifier.height(12.dp))
         }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium); Spacer(Modifier.height(8.dp)) }
+        (state as? WelcomeState.Message)?.let {
+            Text(
+                it.text, style = MaterialTheme.typography.labelMedium,
+                color = if (it.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        val working = state == WelcomeState.Working || state is WelcomeState.NeedsConsent
         Button(
-            onClick = {
-                if (!vm.signInClient.isConfigured) { onSignedIn(); return@Button }
-                val activity = context as? Activity ?: return@Button
-                scope.launch { vm.signIn(activity).onSuccess { onSignedIn() }.onFailure { error = it.message } }
-            },
+            onClick = { (context as? Activity)?.let(vm::start) },
+            enabled = !working,
             modifier = Modifier.fillMaxWidth().height(56.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F4F8), contentColor = Color(0xFF111111)),
-        ) { Text("Continue with Google", style = MaterialTheme.typography.labelLarge) }
+        ) {
+            if (working) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color(0xFF111111))
+            else Text(if (vm.signInClient.isConfigured) "Continue with Google" else "Continue (demo)", style = MaterialTheme.typography.labelLarge)
+        }
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Lock, null, tint = StashdThemeExt.colors.muted, modifier = Modifier.size(16.dp))
