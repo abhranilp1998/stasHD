@@ -92,13 +92,7 @@ fun BrowserScreen(onBack: () -> Unit, onStarted: () -> Unit, vm: BrowserViewMode
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Breadcrumbs(state.stack, onCrumb = vm::goTo)
-            state.coveringFolder?.let {
-                Text(
-                    "Everything here is included via \u201c${it.name}\u201d.",
-                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                )
-            }
+            WholeFolderRow(state, onToggle = vm::toggleCurrentFolder)
             when (val c = state.content) {
                 is FolderContent.Loading -> CenterState {
                     CircularProgressIndicator()
@@ -135,6 +129,39 @@ fun BrowserScreen(onBack: () -> Unit, onStarted: () -> Unit, vm: BrowserViewMode
                 count = state.selected.size,
                 onCancel = { showSheet = false },
                 onStart = { showSheet = false; onStarted() },
+            )
+        }
+    }
+}
+
+/** "Download this folder": selects the folder on screen (the linked root at top level) as one item. */
+@Composable
+private fun WholeFolderRow(state: BrowserUiState, onToggle: () -> Unit) {
+    val via = state.currentFolderIncludedViaAncestor
+    val on = state.currentFolderSelected || via != null
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+            .background(if (on) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer, MaterialTheme.shapes.medium)
+            .clickable(enabled = via == null, onClick = onToggle)
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = on, enabled = via == null, onCheckedChange = { onToggle() })
+        Icon(Icons.Rounded.Download, null, tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                if (state.stack.size == 1) "Download this whole folder" else "Download this folder",
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                when {
+                    via != null -> "Included via \u201c${via.name}\u201d"
+                    state.currentFolderSelected -> "Everything in \u201c${state.current.name}\u201d, incl. subfolders"
+                    else -> "Or tick individual items below"
+                },
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
     }

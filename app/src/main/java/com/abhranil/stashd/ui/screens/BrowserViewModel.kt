@@ -34,7 +34,20 @@ import javax.inject.Inject
  * A level of the folder path. [id]/[resourceKey] are what gets listed (a shortcut's TARGET);
  * [selectionKey] is the item's own id (the shortcut's id), used for selection.
  */
-data class Crumb(val id: String, val name: String, val resourceKey: String?, val selectionKey: String = id)
+data class Crumb(
+    val id: String,
+    val name: String,
+    val resourceKey: String?,
+    val selectionKey: String = id,
+    /** The list item this level was opened from (null for the pasted root). */
+    val source: DriveItem? = null,
+) {
+    /** This folder as a selectable item: the item it was opened from, or the linked root itself. */
+    fun asItem(): DriveItem = source ?: DriveItem(
+        id = id, name = name, mimeType = DriveItem.MIME_FOLDER, size = null, md5 = null,
+        resourceKey = resourceKey, modifiedTime = 0L, canDownload = true,
+    )
+}
 
 sealed interface FolderContent {
     data class Loading(val itemsSoFar: Int = 0) : FolderContent
@@ -65,6 +78,11 @@ data class BrowserUiState(
 
     /** The selected ancestor (or current folder) that already includes everything shown here, if any. */
     val coveringFolder: Crumb? get() = stack.firstOrNull { it.selectionKey in selected }
+
+    /** "Download this folder" is on for the folder being shown (root = the whole linked folder). */
+    val currentFolderSelected: Boolean get() = current.selectionKey in selected
+    /** An ancestor is selected, so the current folder is already included and can't be toggled on its own. */
+    val currentFolderIncludedViaAncestor: Crumb? get() = stack.dropLast(1).firstOrNull { it.selectionKey in selected }
 
     val selectedFolders: Int get() = selected.values.count { it.item.isFolder }
     val selectedFiles: Int get() = selected.values.count { !it.item.isFolder }
@@ -101,7 +119,7 @@ class BrowserViewModel @Inject constructor(
 
     fun open(item: DriveItem) {
         if (!item.isFolder) { toggle(item); return }
-        val crumb = Crumb(item.targetId, item.name, item.targetResourceKey, selectionKey = item.id)
+        val crumb = Crumb(item.targetId, item.name, item.targetResourceKey, selectionKey = item.id, source = item)
         _state.update { it.copy(stack = it.stack + crumb) }
         load(crumb)
     }
@@ -128,6 +146,23 @@ class BrowserViewModel @Inject constructor(
         _state.update {
             val sel = if (item.id in it.selected) it.selected - item.id else it.selected + (item.id to Selection(item, it.stack))
             it.copy(selected = sel)
+        }
+    }
+
+    /**
+     * "Download this folder" for the folder on screen (the linked root at the top level). Uses the same
+     * selection model: a selected folder includes everything under it, so items picked inside it are folded in.
+     */
+    fun toggleCurrentFolder() {
+        val s = _state.value
+        if (s.currentFolderIncludedViaAncestor != null) return
+        val cur = s.current
+        _state.update {
+            if (cur.selectionKey in it.selected) it.copy(selected = it.selected - cur.selectionKey)
+            else {
+                val outside = it.selected.filterValues { sel -> sel.path.none { c -> c.selectionKey == cur.selectionKey } }
+                it.copy(selected = outside + (cur.selectionKey to Selection(cur.asItem(), it.stack.dropLast(1))))
+            }
         }
     }
 
