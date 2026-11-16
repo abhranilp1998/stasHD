@@ -16,8 +16,8 @@ android {
         applicationId = "com.abhranil.stashd"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0-m1a"
+        versionCode = 3
+        versionName = "0.3.0-m3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // TODO(cloud-setup): Web OAuth client ID. Empty placeholder = demo mode. Set stashd.webClientId in
         //   ~/.gradle/gradle.properties (never in the repo); it becomes BuildConfig.WEB_CLIENT_ID.
