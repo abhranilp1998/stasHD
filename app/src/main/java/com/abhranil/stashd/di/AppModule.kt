@@ -90,5 +90,7 @@ abstract class BindingsModule {
     @Binds abstract fun driveAuthorizer(impl: GoogleTokenProvider): DriveAuthorizer
     @Binds abstract fun authorizationBackend(impl: PlayAuthorizationBackend): AuthorizationBackend
     @Binds abstract fun selectedAccount(impl: SettingsStore): SelectedAccount
+    @Binds abstract fun accountPrefs(impl: SettingsStore): com.abhranil.stashd.data.settings.AccountPrefs
+    @Binds abstract fun credentialStateClearer(impl: com.abhranil.stashd.data.auth.SignInClient): com.abhranil.stashd.data.auth.CredentialStateClearer
     @Binds abstract fun folderCache(impl: DriveCache): FolderCache
 }

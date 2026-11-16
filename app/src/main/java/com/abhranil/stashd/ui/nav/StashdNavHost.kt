@@ -12,7 +12,8 @@ import com.abhranil.stashd.ui.screens.NotificationPreviewScreen
 import com.abhranil.stashd.ui.screens.WelcomeScreen
 import kotlinx.serialization.Serializable
 
-@Serializable object WelcomeRoute
+/** [autoStart]: opened by "Switch account", so go straight to the account picker. */
+@Serializable data class WelcomeRoute(val autoStart: Boolean = false)
 @Serializable object HomeRoute
 /** A Drive folder to browse. [resourceKey] comes from the link (or the parent listing) and is sent on every call. */
 @Serializable data class BrowserRoute(val folderId: String, val resourceKey: String? = null, val name: String = "Drive folder")
@@ -26,15 +27,16 @@ import kotlinx.serialization.Serializable
 @Composable
 fun StashdNavHost() {
     val nav = rememberNavController()
-    NavHost(navController = nav, startDestination = WelcomeRoute) {
+    NavHost(navController = nav, startDestination = WelcomeRoute()) {
         composable<WelcomeRoute> {
-            WelcomeScreen(onSignedIn = { nav.navigate(HomeRoute) { popUpTo(WelcomeRoute) { inclusive = true } } })
+            WelcomeScreen(onSignedIn = { nav.navigate(HomeRoute) { popUpTo<WelcomeRoute> { inclusive = true } } })
         }
         composable<HomeRoute> {
             HomeScreen(
                 onOpenFolder = { id, key, name -> nav.navigate(BrowserRoute(id, key, name)) },
                 onHistory = { nav.navigate(HistoryRoute) },
                 onDownloads = { nav.navigate(DownloadsRoute) },
+                onSignedOut = { switch -> nav.navigate(WelcomeRoute(autoStart = switch)) { popUpTo(nav.graph.id) { inclusive = true } } },
             )
         }
         // BrowserViewModel reads folderId / resourceKey / name from SavedStateHandle (the route's args).

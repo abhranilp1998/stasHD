@@ -21,6 +21,15 @@ interface DriveRootDao {
 
 @Dao
 interface DriveNodeDao {
+    @Query("DELETE FROM drive_edge") suspend fun deleteAllEdges()
+    @Query("DELETE FROM drive_listing") suspend fun deleteAllListings()
+    @Query("DELETE FROM drive_node") suspend fun deleteAllNodes()
+    @Query("DELETE FROM drive_root") suspend fun deleteAllRoots()
+
+    /** Sign-out: forget every cached Drive listing and recent folder (they belong to the old account). */
+    @Transaction
+    suspend fun clearDriveCache() { deleteAllEdges(); deleteAllListings(); deleteAllNodes(); deleteAllRoots() }
+
     @Query(
         """
         SELECT n.* FROM drive_node n JOIN drive_edge e ON e.childId = n.fileId

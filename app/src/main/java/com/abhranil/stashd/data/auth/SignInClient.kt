@@ -23,7 +23,7 @@ class SignInCancelledException : Exception("Sign-in cancelled")
  * The ID token is used only to read the email and is not stored.
  */
 @Singleton
-class SignInClient @Inject constructor(@param:ApplicationContext private val appContext: Context) {
+class SignInClient @Inject constructor(@param:ApplicationContext private val appContext: Context) : CredentialStateClearer {
 
     val isConfigured: Boolean get() = !DriveMode.useFake
 
@@ -48,4 +48,7 @@ class SignInClient @Inject constructor(@param:ApplicationContext private val app
     suspend fun signOut() {
         runCatching { CredentialManager.create(appContext).clearCredentialState(ClearCredentialStateRequest()) }
     }
+
+    /** Next sign-in shows the account picker instead of silently reusing the last account. */
+    override suspend fun clearCredentialState() = signOut()
 }

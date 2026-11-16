@@ -68,12 +68,20 @@ sealed interface WelcomeState {
 /** Sign in (Credential Manager) → authorize drive.readonly (AuthorizationClient) → Home. */
 @HiltViewModel
 class AuthViewModel @Inject constructor(
+    private val handle: androidx.lifecycle.SavedStateHandle,
     val signInClient: SignInClient,
     private val authorizer: DriveAuthorizer,
     private val settings: SettingsStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow<WelcomeState>(WelcomeState.Idle)
     val state: StateFlow<WelcomeState> = _state.asStateFlow()
+
+    /** True once when this Welcome was opened by "Switch account" (survives rotation without re-firing). */
+    fun consumeAutoStart(): Boolean {
+        if (handle.get<Boolean>("autoStart") != true || handle.get<Boolean>("autoStartDone") == true) return false
+        handle["autoStartDone"] = true
+        return signInClient.isConfigured
+    }
 
     fun start(activity: Activity) {
         if (_state.value == WelcomeState.Working) return
@@ -119,6 +127,7 @@ fun WelcomeScreen(onSignedIn: () -> Unit, vm: AuthViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val state by vm.state.collectAsState()
     val launchConsent = rememberConsentLauncher(vm::onConsentResult)
+    LaunchedEffect(Unit) { if (vm.consumeAutoStart()) (context as? Activity)?.let(vm::start) }
     LaunchedEffect(state) {
         when (val s = state) {
             WelcomeState.Done -> onSignedIn()

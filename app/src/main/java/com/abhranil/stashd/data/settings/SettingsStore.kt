@@ -26,8 +26,14 @@ data class Settings(
     val theme: String = "dark",
 )
 
+/** The signed-in account as the account screen needs it (fakeable in tests). */
+interface AccountPrefs {
+    val accountEmail: Flow<String?>
+    suspend fun storeAccount(email: String?)
+}
+
 @Singleton
-class SettingsStore @Inject constructor(@param:ApplicationContext private val context: Context) : SelectedAccount {
+class SettingsStore @Inject constructor(@param:ApplicationContext private val context: Context) : SelectedAccount, AccountPrefs {
     private object Keys {
         val account = stringPreferencesKey("accountEmail")
         val dest = stringPreferencesKey("lastDestTreeUri")
@@ -51,6 +57,8 @@ class SettingsStore @Inject constructor(@param:ApplicationContext private val co
     }
 
     override suspend fun email(): String? = settings.first().accountEmail
+    override val accountEmail: Flow<String?> get() = settings.map { it.accountEmail }
+    override suspend fun storeAccount(email: String?) { setAccount(email) }
 
     suspend fun setAccount(email: String?) = context.dataStore.edit { if (email == null) it.remove(Keys.account) else it[Keys.account] = email }
     suspend fun setDestination(uri: String) = context.dataStore.edit { it[Keys.dest] = uri }

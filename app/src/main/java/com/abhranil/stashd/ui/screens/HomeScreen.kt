@@ -164,6 +164,7 @@ fun HomeScreen(
     onOpenFolder: (id: String, resourceKey: String?, name: String) -> Unit,
     onHistory: () -> Unit,
     onDownloads: () -> Unit,
+    onSignedOut: (switchAccount: Boolean) -> Unit = {},
     vm: HomeViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsState()
@@ -183,6 +184,7 @@ fun HomeScreen(
             StashdTopBar("Stashd", actions = {
                 IconButton(onClick = onDownloads) { Icon(Icons.Rounded.Downloading, "Downloads") }
                 IconButton(onClick = onHistory) { Icon(Icons.Rounded.History, "History") }
+                AccountMenu(onSignedOut = onSignedOut)
             })
         },
         containerColor = MaterialTheme.colorScheme.background,
