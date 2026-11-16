@@ -27,6 +27,10 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import com.abhranil.stashd.download.core.RetryPolicy
 import com.abhranil.stashd.data.db.ActiveBatchExists
 import com.abhranil.stashd.download.core.DownloadController
 import com.abhranil.stashd.download.core.NewBatch
@@ -54,7 +58,8 @@ data class Crumb(
 }
 
 sealed interface FolderContent {
-    data class Loading(val itemsSoFar: Int = 0) : FolderContent
+    /** [retryingIn] > 0 while waiting out a 429/5xx before the next attempt. */
+    data class Loading(val itemsSoFar: Int = 0, val retryingIn: Long = 0) : FolderContent
     data class Loaded(val items: List<DriveItem>, val fromCache: Boolean = false, val incomplete: Incomplete? = null) : FolderContent
     data class Error(val message: String, val needsConsent: Boolean = false, val consentIntent: PendingIntent? = null) : FolderContent
 }
@@ -76,7 +81,18 @@ data class BrowserUiState(
     val stack: List<Crumb>,
     val content: FolderContent = FolderContent.Loading(),
     val selected: Map<String, Selection> = emptyMap(),
+    /** Pull-to-refresh in flight: the current listing stays on screen meanwhile. */
+    val refreshing: Boolean = false,
+    /** One-off message (e.g. "already selected via a shortcut"); the screen shows it and calls [BrowserViewModel.clearNotice]. */
+    val notice: String? = null,
 ) {
+    /** The selection that already points at the same Drive file/folder as [item] (a shortcut and its target, or two shortcuts). */
+    fun sameTargetAs(item: DriveItem): Selection? =
+        selected.values.firstOrNull { it.item.id != item.id && it.item.targetId == item.targetId }
+
+    /** Checked in the list: picked itself, or the same target is picked under another name. */
+    fun isChecked(item: DriveItem): Boolean = item.id in selected || sameTargetAs(item) != null
+
     val current: Crumb get() = stack.last()
     val items: List<DriveItem> get() = (content as? FolderContent.Loaded)?.items.orEmpty()
 
@@ -110,8 +126,17 @@ class BrowserViewModel @Inject constructor(
         resourceKey = savedStateHandle.get<String>("resourceKey"),
     )
 
-    private val _state = MutableStateFlow(BrowserUiState(stack = listOf(root)))
+    private val handle = savedStateHandle
+    private val _state = MutableStateFlow(
+        BrowserSavedState.decode(savedStateHandle.get<String>(BrowserSavedState.KEY), root.id)
+            ?.let { (stack, sel) -> BrowserUiState(stack = stack, selected = sel) }
+            ?: BrowserUiState(stack = listOf(root)),
+    )
     val state: StateFlow<BrowserUiState> = _state.asStateFlow()
+
+    /** Drive listing retries for 429/5xx. [sleep] is swappable so tests don't wait. */
+    private val retryPolicy = RetryPolicy()
+    internal var sleep: suspend (Long) -> Unit = { delay(it) }
 
     val settings: StateFlow<Settings> = (settingsStore?.settings ?: emptyFlow())
         .stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
@@ -119,8 +144,17 @@ class BrowserViewModel @Inject constructor(
     /** Listings fetched this session, so going back is instant and doesn't re-hit Drive. */
     private val listed = HashMap<String, List<DriveItem>>()
     private var loadJob: Job? = null
+    private var loadGeneration = 0
 
-    init { load(root) }
+    init {
+        // Path + picks survive process death (Android may kill Stashd while it's in the background).
+        viewModelScope.launch {
+            _state.map { it.stack to it.selected }.distinctUntilChanged().collect { (stack, sel) ->
+                handle[BrowserSavedState.KEY] = BrowserSavedState.encode(stack, sel)
+            }
+        }
+        load(_state.value.current)
+    }
 
     fun open(item: DriveItem) {
         if (!item.isFolder) { toggle(item); return }
@@ -148,6 +182,10 @@ class BrowserViewModel @Inject constructor(
     fun toggle(item: DriveItem) {
         val s = _state.value
         if (s.coveringFolder != null) return // already included via a selected parent folder
+        if (item.id !in s.selected) s.sameTargetAs(item)?.let { other ->
+            _state.update { it.copy(notice = "Already selected as \u201c${other.item.name}\u201d (same Drive ${if (item.isFolder) "folder" else "file"}).") }
+            return
+        }
         _state.update {
             val sel = if (item.id in it.selected) it.selected - item.id else it.selected + (item.id to Selection(item, it.stack))
             it.copy(selected = sel)
@@ -172,6 +210,15 @@ class BrowserViewModel @Inject constructor(
     }
 
     fun clearSelection() = _state.update { it.copy(selected = emptyMap()) }
+    fun clearNotice() = _state.update { it.copy(notice = null) }
+
+    /** Pull-to-refresh: list the current folder again from Drive, keeping what's shown until the new listing arrives. */
+    fun refresh() {
+        val s = _state.value
+        if (s.content !is FolderContent.Loaded) return retry()
+        listed.remove(s.current.id)
+        load(s.current, refresh = true)
+    }
 
     fun retry() { listed.remove(_state.value.current.id); load(_state.value.current) }
 
@@ -200,22 +247,49 @@ class BrowserViewModel @Inject constructor(
         load(s.current, resume = c.items to token)
     }
 
-    private fun load(crumb: Crumb, resume: Pair<List<DriveItem>, String>? = null) {
+    private fun load(crumb: Crumb, resume: Pair<List<DriveItem>, String>? = null, refresh: Boolean = false) {
         loadJob?.cancel()
-        if (resume == null) listed[crumb.id]?.let { setContent(crumb, FolderContent.Loaded(it)); return }
-        setContent(crumb, FolderContent.Loading(resume?.first?.size ?: 0))
+        _state.update { it.copy(refreshing = refresh) }
+        if (resume == null && !refresh) listed[crumb.id]?.let { setContent(crumb, FolderContent.Loaded(it)); return }
+        if (!refresh) setContent(crumb, FolderContent.Loading(resume?.first?.size ?: 0))
+        val gen = ++loadGeneration
         loadJob = viewModelScope.launch {
+            try { listInto(crumb, resume, refresh) } finally {
+                // Only the newest load may clear the flag (a cancelled one finishes after its replacement started).
+                if (gen == loadGeneration) _state.update { it.copy(refreshing = false) }
+            }
+        }
+    }
+
+    /** One files.list page, retried on 429/5xx with the downloader's backoff (Retry-After honoured). */
+    private suspend fun pageWithBackoff(crumb: Crumb, token: String?, itemsSoFar: Int, quiet: Boolean): com.abhranil.stashd.data.drive.DrivePage {
+        var attempt = 0
+        while (true) {
+            try {
+                return drive.listPage(crumb.id, crumb.resourceKey, token)
+            } catch (e: DriveError) {
+                val retryAfter = when (e) { is DriveError.RateLimited -> e.retryAfterMs; is DriveError.Server -> null; else -> throw e }
+                if (++attempt > MAX_LIST_RETRIES) throw e
+                val wait = retryPolicy.delayMs(attempt, retryAfter)
+                if (!quiet) setContent(crumb, FolderContent.Loading(itemsSoFar, retryingIn = wait))
+                sleep(wait)
+                if (!quiet) setContent(crumb, FolderContent.Loading(itemsSoFar))
+            }
+        }
+    }
+
+    private suspend fun listInto(crumb: Crumb, resume: Pair<List<DriveItem>, String>?, refresh: Boolean) {
             try {
                 val items = ArrayList<DriveItem>(resume?.first.orEmpty())
                 var token: String? = resume?.second
                 var incompleteSearch = false
                 var pages = 0
                 do {
-                    val page = drive.listPage(crumb.id, crumb.resourceKey, token)
+                    val page = pageWithBackoff(crumb, token, items.size, quiet = refresh)
                     items += page.items
                     incompleteSearch = incompleteSearch || page.incompleteSearch
                     token = page.nextPageToken
-                    if (token != null) setContent(crumb, FolderContent.Loading(items.size))
+                    if (token != null && !refresh) setContent(crumb, FolderContent.Loading(items.size))
                 } while (token != null && ++pages < DriveRepository.MAX_PAGES)
                 val listing = FolderListing(items, token, incompleteSearch)
                 if (listing.isComplete) {
@@ -232,11 +306,15 @@ class BrowserViewModel @Inject constructor(
             } catch (e: NeedsConsentException) {
                 setContent(crumb, FolderContent.Error("Stashd needs your OK to read Drive (it expires every 7 days while the app is in testing).", true, e.pendingIntent))
             } catch (e: Exception) {
+                if (refresh && _state.value.content is FolderContent.Loaded) {
+                    // Keep the listing on screen; just say the refresh didn't work.
+                    _state.update { it.copy(notice = "Couldn't refresh: ${messageFor(e)}") }
+                    return
+                }
                 val cached = runCatching { cache.cachedChildren(crumb.id) }.getOrNull()
                 if (cached != null && e is IOException) setContent(crumb, FolderContent.Loaded(cached, fromCache = true))
                 else setContent(crumb, FolderContent.Error(messageFor(e)))
             }
-        }
     }
 
     private fun setContent(crumb: Crumb, content: FolderContent) =
@@ -283,4 +361,9 @@ class BrowserViewModel @Inject constructor(
     }
 
     fun clearStartError() { _startError.value = null }
+
+    companion object {
+        /** Retries per page for 429/5xx before showing the error (then "Retry" is manual). */
+        const val MAX_LIST_RETRIES = 3
+    }
 }

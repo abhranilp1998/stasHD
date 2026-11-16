@@ -20,6 +20,8 @@ class ScriptedDrive : DriveRepository {
     val calls = mutableListOf<Call>()
     val pages = HashMap<String, List<List<DriveItem>>>()
     val failures = HashMap<String, Exception>()
+    /** Thrown once each, in order, before the folder lists normally (429/5xx bursts). */
+    val transient = HashMap<String, MutableList<Exception>>()
     /** folderId -> page indexes that come back with incompleteSearch=true. */
     val incompletePages = HashMap<String, Set<Int>>()
     var resolved: suspend (DriveLink) -> DriveItem = { folder(it.id, it.resourceKey) }
@@ -29,6 +31,7 @@ class ScriptedDrive : DriveRepository {
     override suspend fun listPage(folderId: String, resourceKey: String?, pageToken: String?): DrivePage {
         calls += Call(folderId, resourceKey, pageToken)
         failures[folderId]?.let { throw it }
+        transient[folderId]?.removeFirstOrNull()?.let { throw it }
         val p = pages[folderId] ?: listOf(emptyList())
         val i = pageToken?.removePrefix("p")?.toInt() ?: 0
         return DrivePage(p[i], if (i + 1 < p.size) "p${i + 1}" else null, i in incompletePages[folderId].orEmpty())

@@ -58,6 +58,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -86,8 +89,11 @@ fun BrowserScreen(onBack: () -> Unit, onStarted: () -> Unit, vm: BrowserViewMode
     val launchConsent = rememberConsentLauncher(vm::onConsentResult)
 
     BackHandler(enabled = state.stack.size > 1) { vm.back() }
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(state.notice) { state.notice?.let { snackbar.showSnackbar(it); vm.clearNotice() } }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = { StashdTopBar(state.current.name, onBack = { if (!vm.back()) onBack() }) },
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
@@ -102,6 +108,13 @@ fun BrowserScreen(onBack: () -> Unit, onStarted: () -> Unit, vm: BrowserViewMode
                     CircularProgressIndicator()
                     Spacer(Modifier.height(16.dp))
                     Text(if (c.itemsSoFar > 0) "Loading\u2026 ${c.itemsSoFar} items so far" else "Loading folder\u2026", style = MaterialTheme.typography.bodyMedium)
+                    if (c.retryingIn > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Drive is busy. Trying again in ${(c.retryingIn + 999) / 1000} s\u2026",
+                            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 is FolderContent.Error -> CenterState {
                     Icon(if (c.needsConsent) Icons.Rounded.Lock else Icons.Rounded.CloudOff, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(40.dp))
@@ -111,11 +124,19 @@ fun BrowserScreen(onBack: () -> Unit, onStarted: () -> Unit, vm: BrowserViewMode
                     if (c.needsConsent) Button(onClick = { c.consentIntent?.let(launchConsent) ?: vm.requestAccess(launchConsent) }) { Text("Grant Drive access") }
                     else Button(onClick = vm::retry) { Text("Retry") }
                 }
-                is FolderContent.Loaded -> if (c.items.isEmpty()) CenterState {
-                    Icon(Icons.Rounded.FolderOff, null, tint = StashdThemeExt.colors.muted, modifier = Modifier.size(40.dp))
-                    Spacer(Modifier.height(12.dp))
-                    Text("This folder is empty.", style = MaterialTheme.typography.bodyMedium)
-                } else FolderList(c, state, vm)
+                is FolderContent.Loaded -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize()) {
+                    if (c.items.isEmpty()) LazyColumn(Modifier.fillMaxSize()) {
+                        // Scrollable so the pull gesture works on an empty folder too.
+                        item {
+                            CenterState {
+                                Icon(Icons.Rounded.FolderOff, null, tint = StashdThemeExt.colors.muted, modifier = Modifier.size(40.dp))
+                                Spacer(Modifier.height(12.dp))
+                                Text("This folder is empty.", style = MaterialTheme.typography.bodyMedium)
+                                Text("Pull down to refresh.", style = MaterialTheme.typography.labelMedium, color = StashdThemeExt.colors.muted)
+                            }
+                        }
+                    } else FolderList(c, state, vm)
+                }
             }
         }
     }
@@ -232,7 +253,7 @@ private fun FolderList(c: FolderContent.Loaded, state: BrowserUiState, vm: Brows
             }
         }
         items(c.items, key = DriveItem::id) { item ->
-            val on = covered || item.id in state.selected
+            val on = covered || state.isChecked(item)
             Row(
                 Modifier.fillMaxWidth().padding(vertical = 2.dp)
                     .background(if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else MaterialTheme.colorScheme.background, MaterialTheme.shapes.medium)
