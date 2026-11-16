@@ -8,7 +8,7 @@ State at `main` after M2 (commit `90dc6e3`). Single Gradle module `:app`, packag
 |---|---|
 | `StashdApp`, `MainActivity` | Hilt application (WorkManager configured with `HiltWorkerFactory`, its JobScheduler id range set to 1000–5000), notification channel, single activity |
 | `ui/nav` | `StashdNavHost`, type-safe routes: Welcome → Home → Browser(folderId, resourceKey, name) → Downloads; NotificationPreview, History |
-| `ui/screens` | Compose screens + view models: `WelcomeScreen`, `HomeScreen`/`HomeViewModel` (paste link, recent folders), `BrowserScreen`/`BrowserViewModel` (navigation, selection, destination sheet, "Start download"), `DownloadsScreen`/`DownloadsViewModel`, `HistoryScreen` (static sample), `NotificationPreviewScreen` (design preview) |
+| `ui/screens` | Compose screens + view models: `WelcomeScreen`, `HomeScreen`/`HomeViewModel` (paste link, recent folders), `BrowserScreen`/`BrowserViewModel` (navigation, selection, destination sheet, "Start download"), `DownloadsScreen`/`DownloadsViewModel`, `HistoryScreen`/`HistoryViewModel` (Room-backed, retries), `AccountMenu`/`AccountViewModel` (sign out, switch), `NotificationPreviewScreen` (design preview) |
 | `ui/components`, `ui/theme` | Shared composables (progress bar, overline, consent launcher), theme and fonts |
 | `data/auth` | `SignInClient` (Credential Manager), `AuthorizationBackend`/`PlayAuthorizationBackend` (AuthorizationClient, `drive.readonly`), `GoogleTokenProvider` (token cache keyed by account; `NeedsConsentException`) |
 | `data/drive` | `DriveRepository` interface; `RealDriveRepository` (OkHttp, Drive v3), `FakeDriveRepository` (demo), `DriveMode` (which one), `LinkParser`, `DriveModels` (`DriveItem`, `DriveError`, `DriveDownload`), `DriveCache`/`FolderCache` |
@@ -26,9 +26,9 @@ State at `main` after M2 (commit `90dc6e3`). Single Gradle module `:app`, packag
 
 `DriveMode.useFake` is true when `BuildConfig.WEB_CLIENT_ID` is blank (no `stashd.webClientId` Gradle property) or `stashd.fakeDrive=true`. `AppModule` then provides `FakeDriveRepository`, the token provider short-circuits, and Welcome skips sign-in. All credential touchpoints are tagged `TODO(cloud-setup)` (list in [SETUP.md](../SETUP.md#cloud-setup-todos)).
 
-## Data model (Room v4)
+## Data model (Room v5)
 
-Schemas are exported in `app/schemas/` (1–4). Upgrades use a **destructive fallback** for now, so the cache and download history are wiped on a schema change. Real migrations are an M3 item.
+Schemas are exported in `app/schemas/` (1–5) and checked in. From v4 on, every upgrade is a hand-written `Migration` in `data/db/Migrations.kt` with a `MigrationTest` (Room `MigrationTestHelper`; the schemas are debug-only assets so Robolectric can read them). Only v1–v3 (pre-M2 dev builds) fall back to a destructive wipe. v5 adds `file_task.md5State`: a `ResumableMd5` midstate saved every 8 MB so a resume re-hashes only the tail.
 
 **Drive cache**
 | Table | Key | Purpose |

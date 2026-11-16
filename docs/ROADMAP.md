@@ -1,6 +1,6 @@
 # Stashd roadmap
 
-Status as of `main` @ `90dc6e3` (M2). ✅ done · 🔜 next · ⏳ later. Every "done" item is done **in code with unit tests**. None of it has been run against real Google sign-in or Drive yet, and none of it has been checked on a phone yet (that is M3).
+Status as of `main` @ v0.3.0-m3 (M3 code). ✅ done · 🔜 next · ⏳ later. Every "done" item is done **in code with unit tests**. None of it has been run against real Google sign-in or Drive yet, and none of it has been checked on a phone yet (that is M3).
 
 > The original build plan (`stashd-build-plan.pdf`) numbered the milestones differently (M2 browser, M3 engine, M4 progress UI). The owner later revised it: browsing became M1, dependable downloading M2, and device acceptance M3. M4 and M5 below keep the plan's progress-UI and hardening/release scope.
 
@@ -45,16 +45,20 @@ Status as of `main` @ `90dc6e3` (M2). ✅ done · 🔜 next · ⏳ later. Every 
   - [ ] SD card / USB destination ejected → paused
   - [ ] WorkManager path on Android 8–13
   - [ ] notification permission denied
-- [ ] Real History screen backed by `download_batch` / `file_task` (currently static sample)
-- [ ] Real Room migrations (replace the destructive fallback; add migration tests)
-- [ ] Faster resume for large files (avoid re-hashing the whole partial file on each resume)
-- [ ] Sign-out / switch-account UI
-- [ ] Pull-to-refresh in the browser
-- [ ] Automatic backoff/retry for browser listings on 429/5xx
-- [ ] Restore browser state (path, selection) after process death
+- [x] Real History screen backed by `download_batch` / `file_task` (retry one file, retry all failed, download again, remove)
+- [x] Real Room migrations (v4 → v5; destructive only from pre-M2 v1–v3; migration tests)
+- [x] Faster resume for large files (persisted MD5 midstate every 8 MB; only the tail is re-hashed)
+- [x] Sign-out / switch-account UI
+- [x] Pull-to-refresh in the browser
+- [x] Automatic backoff/retry for browser listings on 429/5xx
+- [x] Restore browser state (path, selection) after process death
+- [x] Shortcut/target dedup in selections
+- [x] Notification Resume via the app (UIDT visibility rule)
+- [x] Release build type: signing placeholders, R8 rules, resource shrinking (`assembleRelease` verified)
+- [x] Bump `versionName` → 0.3.0-m3
 - [ ] Google Docs/Sheets/Slides export (currently skipped and listed)
 - [ ] Several files at once (use the existing parallelism setting)
-- [ ] Bump `versionName` (still `0.2.0-m1a` in `app/build.gradle.kts`)
+- [ ] Run a release build on the phone (R8 is build-verified only)
 
 ## ⏳ Cloud setup (owner; unblocks real Drive)
 - [ ] Google Cloud project + Drive API enabled
@@ -65,14 +69,14 @@ Status as of `main` @ `90dc6e3` (M2). ✅ done · 🔜 next · ⏳ later. Every 
 
 ## ⏳ M4: progress UI, notification, history (polish)
 - [ ] Downloads screen: per-item rows with expandable per-file rows
-- [ ] History: batch summary, failed-file card with reason and Retry, Retry all failed, Open folder
+- [ ] History: "Open folder" action (summary, reasons, Retry and Retry all landed in M3)
 - [ ] Notification: Open action; check that the UI, notification and Room numbers agree within about 1 s
 - [ ] Compare the screens with the mockups in [screenshots/](screenshots/) (light variant included)
 
 ## ⏳ M5: hardening and release
-- [ ] Platform limits: Android 15 dataSync timeout on the WorkManager path, Doze, process-death recovery
+- [ ] Platform limits: Android 15 dataSync timeout on the WorkManager path, Doze, process-death recovery on a phone
 - [ ] Edge content: 0-byte files, empty folders, very deep trees, huge folders
-- [ ] Accessibility (TalkBack labels on progress, 200% font scale), R8, baseline profile, crash reporting
+- [ ] Accessibility (TalkBack labels on progress, 200% font scale), baseline profile, crash reporting
 - [ ] Bump targetSdk (currently 35)
 - [ ] Signed release APK for sideloading (release keystore kept out of git; release SHA-1 on the Android OAuth client)
 - [ ] Choose a license

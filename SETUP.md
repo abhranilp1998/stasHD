@@ -83,9 +83,10 @@ git grep -n "TODO(cloud-setup)" -- ':!SETUP.md'
 | M2 schedulers: UIDT JobService on Android 14+ (`DownloadJobService`), WorkManager dataSync worker otherwise or if UIDT is refused; both call the same `DownloadExecution` → `BatchRunner` | Code done, selector tested; **needs a phone** |
 | "Start download" and "Download this folder" → batch; Downloads screen shows the active/last batch from Room + live speed; notification with Pause/Cancel (Resume when paused) | Done |
 | Google Docs export | Later (skipped and listed for now) |
-| History screen | Static sample |
+| History screen (M3): Room-backed, retry one/all failed, download again | Done, tests |
+| Sign-out / switch account, browser restore after process death, 429/5xx backoff, pull-to-refresh, shortcut dedup (M3) | Done, tests |
 
-DB note: schema is now v4 (v2: edge table, v3: shortcut target columns, v4: download batches/tasks), destructive fallback: upgrading from an older build wipes the cache and download history (files already on the phone are untouched). Proper migrations come before M3.
+DB note: schema is now v5 (v2: edge table, v3: shortcut target columns, v4: download batches/tasks, v5: md5 checkpoint per file). From v4 on, upgrades use real migrations (`data/db/Migrations.kt`) and keep history and paused downloads. Only pre-M2 builds (v1–v3) are wiped once.
 
 ### Download behaviour (M2)
 - **One active batch.** A batch is active while preparing, queued, running or paused. "Start download" while one is active shows "Another download is still active…"; finish, cancel, or resume it first.
@@ -118,4 +119,4 @@ DB note: schema is now v4 (v2: edge table, v3: shortcut target columns, v4: down
 8. Deny the notification permission: the download still runs (Task Manager on 14+), just without progress in the shade.
 
 ## 6. Next milestones
-M1 remainder (live verification once Cloud setup exists) · M2 code done, needs the phone checks in §5b and a real-Drive run · M3 phone acceptance (real migrations, parallel files, history screen) · later: Google Docs export, polish.
+M1 remainder (live verification once Cloud setup exists) · M2 code done, needs the phone checks in §5b and a real-Drive run · M3 code done (migrations, history, account, browser hardening, release build); phone acceptance next · later: Google Docs export, polish.

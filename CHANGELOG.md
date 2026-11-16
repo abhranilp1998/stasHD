@@ -1,6 +1,27 @@
 # Changelog
 
-All notable changes, grouped by milestone. Dates are IST (UTC+5:30). Versions are milestone labels: `versionName` in `app/build.gradle.kts` is still `0.2.0-m1a` and hasn't been bumped since M1a. Nothing here has been tested against real Google Drive yet (see [SETUP.md](SETUP.md)).
+All notable changes, grouped by milestone. Dates are IST (UTC+5:30). Versions are milestone labels; from M3 `versionName` matches (`0.3.0-m3`, versionCode 3). Nothing here has been tested against real Google Drive yet (see [SETUP.md](SETUP.md)).
+
+## [0.3.0-m3] – 2026-11-16 (M3 code: hardening without Cloud credentials)
+Commits `3496eb2` … `34e732b`. Not run on a phone yet (no emulator on the build box); see [docs/DEPLOY.md](docs/DEPLOY.md).
+
+### Added
+- **Deploy-readiness audit** (`3496eb2`): [docs/DEPLOY.md](docs/DEPLOY.md), the 2026 rules (developer verification, targetSdk, UIDT/FGS, OAuth Testing limits, signing, R8, 16 KB pages) checked against the code, with blockers and nice-to-haves.
+- **Real Room migrations** (`d194e1c`): schema v5 with `Migration(4, 5)`; the destructive fallback is limited to pre-M2 v1–v3. `MigrationTest` builds a v4 DB with a paused batch, migrates it and checks that nothing was lost.
+- **Faster resume** (`f052fed`): a pure-Kotlin `ResumableMd5` whose midstate is saved every 8 MB in `file_task.md5State`. A resume hashes only the bytes after the checkpoint; a missing or bad checkpoint falls back to hashing the whole partial. The final md5 check against Drive is unchanged.
+- **Browser hardening** (`82e61ec`):
+  - The path and selection survive process death (JSON in `SavedStateHandle`).
+  - 429/5xx listings retry up to 3 times with the downloader's backoff (Retry-After honoured), showing "Drive is busy. Trying again…".
+  - Pull to refresh keeps the current list on screen and says so if the refresh fails.
+  - A shortcut and its target (or two shortcuts to one item) can't both be picked; a note says which pick already covers it.
+- **Sign out / switch account** (`529edf3`): an account menu on Home. Signing out pauses the active download (`AUTH`, resumable), revokes the cached token, clears Credential Manager state, and forgets the email, cached listings and recent folders. Switching opens the account picker right away.
+- **History** (`39c4c8c`): a Room-backed list of batches grouped by day, with counts, failed and skipped files with plain-language reasons, "Retry N failed", a per-file retry, "Download again" for cancelled/failed batches (a new batch with skip-existing on), and "Remove".
+- **Release build** (`097e4a1`): signing config read from `stashd.release.*` in `~/.gradle/gradle.properties` (`TODO(release-signing)`; no keystore in the repo; unsigned without them). Resource shrinking is on. R8 rules cover Credential Manager, Google ID and serializers. `assembleRelease` passes, and signing was checked with a throwaway key that wasn't kept.
+
+### Changed
+- **The notification's Resume opens the app** (`456d754`), which then resumes. Android 14+ only allows a UIDT job to be scheduled while the app is visible.
+- Version 0.3.0-m3, versionCode 3 (`34e732b`).
+- 154 unit tests (134 at M2).
 
 ## [0.3.0-m2] – 2026-11-14 (dependable downloading)
 Commits `b99194c` … `90dc6e3`.
