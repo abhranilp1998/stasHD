@@ -1,10 +1,10 @@
 package com.abhranil.stashd.download.worker
 
-import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
+import androidx.core.content.edit
 import com.abhranil.stashd.download.core.DownloadController
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -26,7 +26,6 @@ class DownloadStartupRecovery @Inject constructor(
     private var recovered = false
 
     // Persist the acknowledgement before allowing transfers; this blocking write runs on Dispatchers.IO.
-    @SuppressLint("ApplySharedPref")
     suspend fun recover() = withContext(Dispatchers.IO + NonCancellable) {
         mutex.withLock {
             if (recovered) return@withLock
@@ -41,7 +40,7 @@ class DownloadStartupRecovery @Inject constructor(
             ) exit.timestamp else null
             controller.get().reconcileInterrupted(stoppedAt)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && exit != null) {
-                preferences.edit().putLong("handled_exit", exit.timestamp).commit()
+                preferences.edit(commit = true) { putLong("handled_exit", exit.timestamp) }
             }
             recovered = true
         }

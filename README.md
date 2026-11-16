@@ -29,6 +29,7 @@ One batch and one file run at a time. Google Docs/Sheets/Slides export is not im
 - 177 JVM tests passed on Windows; Android lint reported zero issues.
 - The installed Android 13 emulator upgrade from database v4 to v6 kept a paused batch, all 12 tasks, saved picks and 90,112 partial bytes exactly.
 - That upgraded app resumed and completed 12 files (43,800,000 bytes). Independent checks matched every byte to the generated sample and found no remaining partial files.
+- The minified signed demo ran on an API 37 / 16 KB emulator; Android user-stop recovery required explicit Resume.
 - Signed demo packaging passed certificate, package-name, SHA-256, ZIP alignment and 64-bit native ELF alignment checks.
 
 These checks do not substitute for live Google authorization or a physical phone. Current acceptance evidence and remaining checks are in [DEPLOY.md](docs/DEPLOY.md).
@@ -50,4 +51,4 @@ Debug builds use sample data unless configured for real Drive. Real releases fai
 - [Changelog](CHANGELOG.md)
 - [Longer-term roadmap](docs/ROADMAP.md)
 
-The older images in `docs/screenshots/01-*` through `07-*` are design mockups, not evidence of running-app behavior.
+Actual upgrade-test captures are in [acceptance screenshots](docs/screenshots/acceptance/). The older images in `docs/screenshots/01-*` through `07-*` are design mockups, not evidence of running-app behavior.

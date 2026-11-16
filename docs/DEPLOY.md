@@ -14,13 +14,15 @@ Candidate: **0.3.1-rc.1**, versionCode 4. Evidence recorded on 16 November 2026.
 | History | The completed batch and its actual counts were visible in the running app. |
 | Permanent key | Created outside Git; password protected locally with Windows DPAPI. Public certificate is in `release-certificate.pem`. |
 | Signed demo APK | R8/resource shrinking, one signer matching the pinned certificate, expected demo package, SHA-256 manifest and ZIP alignment verified. |
+| Signed UIDT runtime | Installed the minified signed demo on an API 37 emulator with 16 KB pages. A user stop left a recoverable pause; the retained job was cancelled and explicit Resume continued the batch. |
+| Real-Drive package | Built with the supplied Web client ID, signed by the permanent key, installed and launched on API 37. Welcome displays Continue with Google; live sign-in remains untested. |
+| UIDT interruptions | On the signed demo, Stop at 7.14 MB produced a system pause and removed the retained job. Explicit Resume continued, screen-off progress advanced to 22.53 MB, Wi-Fi loss requeued at 23.65 MB, and restoring Wi-Fi completed 12/12 files. All 43,800,000 bytes matched the expected sample and no partials remained. |
 | Native page alignment | All four arm64/x86_64 native libraries have 16 KB-aligned ELF LOAD segments. |
 
 The Android 13 upgrade test used a read-only clone of the existing AVD. Its low-storage reserve threshold was reduced inside the disposable clone to allow installation; the original AVD was not modified.
 
 ## Pending before regular real-Drive use
 
-- [ ] Finish the Web OAuth client configuration and build the real-Drive release with that ID.
 - [ ] Install the signed APK on the owner's physical phone and sign in using an allowed test account.
 - [ ] Complete a small real-Drive nested folder download and check its files.
 - [ ] Check Pause/Resume, screen lock, network loss, notification actions and app/process stop on that phone.
