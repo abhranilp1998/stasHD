@@ -229,6 +229,7 @@ class BatchRunner(
         private var persistedAt = 0L
         override suspend fun namesClaimed(finalName: String, tempName: String) = dao.claimNames(taskId, finalName, tempName)
         override suspend fun remoteChanged(now: RemoteFingerprint) = dao.remoteChanged(taskId, now.size, now.md5, now.modifiedTime)
+        override suspend fun checkpoint(md5State: String?) = dao.saveMd5State(taskId, md5State)
         override suspend fun progress(bytesDone: Long) {
             last = bytesDone
             onBytes(bytesDone)
@@ -257,6 +258,7 @@ class BatchRunner(
 fun FileTaskEntity.toJob(skipExisting: Boolean) = FileJob(
     taskId = id, fileId = fileId, resourceKey = resourceKey, dirSegments = dirSegments, plannedName = plannedName,
     expected = RemoteFingerprint(size, md5, modifiedTime), finalName = finalName, tempName = tempName, skipExisting = skipExisting,
+    md5State = md5State,
 )
 
 fun DownloadItemEntity.toPick() = PickedItem(

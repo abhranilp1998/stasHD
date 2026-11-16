@@ -123,7 +123,8 @@ interface DownloadDao {
     @Query("UPDATE file_task SET bytesDone = :bytes WHERE id = :taskId") suspend fun setBytes(taskId: Long, bytes: Long)
     @Query("UPDATE file_task SET finalName = :finalName, tempName = :tempName WHERE id = :taskId")
     suspend fun claimNames(taskId: Long, finalName: String, tempName: String)
-    @Query("UPDATE file_task SET size = :size, md5 = :md5, modifiedTime = :modified, bytesDone = 0 WHERE id = :taskId")
+    @Query("UPDATE file_task SET md5State = :state WHERE id = :taskId") suspend fun saveMd5State(taskId: Long, state: String?)
+    @Query("UPDATE file_task SET size = :size, md5 = :md5, modifiedTime = :modified, bytesDone = 0, md5State = NULL WHERE id = :taskId")
     suspend fun remoteChanged(taskId: Long, size: Long?, md5: String?, modified: Long)
     @Query("UPDATE file_task SET state = 'RUNNING', startedAt = COALESCE(startedAt, :now) WHERE id = :taskId")
     suspend fun markRunning(taskId: Long, now: Long)
@@ -138,7 +139,7 @@ interface DownloadDao {
     suspend fun markSkipped(taskId: Long, reason: FailureReason, message: String?, now: Long)
     @Query("UPDATE file_task SET state = 'FAILED', errorReason = :reason, errorMessage = :message, finishedAt = :now WHERE id = :taskId")
     suspend fun markFailed(taskId: Long, reason: FailureReason, message: String?, now: Long)
-    @Query("UPDATE file_task SET state = 'CANCELLED', tempName = NULL, bytesDone = 0 WHERE batchId = :batchId AND state NOT IN ('DONE','SKIPPED','FAILED')")
+    @Query("UPDATE file_task SET state = 'CANCELLED', tempName = NULL, bytesDone = 0, md5State = NULL WHERE batchId = :batchId AND state NOT IN ('DONE','SKIPPED','FAILED')")
     suspend fun cancelOpenTasks(batchId: Long)
     @Query("UPDATE file_task SET state = 'QUEUED', attempts = 0, errorReason = NULL, errorMessage = NULL, finishedAt = NULL WHERE batchId = :batchId AND state = 'FAILED'")
     suspend fun requeueFailed(batchId: Long): Int

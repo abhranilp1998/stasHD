@@ -210,4 +210,28 @@ class FileDownloaderTest {
         server.enqueue(MockResponse().setBody("""{"id":"file1","name":"x","mimeType":"application/vnd.google-apps.document"}"""))
         try { downloader.download(job(final = "01 Song.flac", temp = "01 Song.flac.stashdpart"), dest, Recorder()); fail() } catch (_: DriveError.NotDownloadable) {}
     }
+
+    @Test fun resumeWithMd5CheckpointOnlyRehashesTheTail() = runTest {
+        val have = 250_000
+        partial(have)
+        // Checkpoint taken at 200 000 bytes (the last 50 000 were written after it).
+        val state = com.abhranil.stashd.download.core.ResumableMd5().apply { update(content, 0, 200_000) }.saveState()
+        server.enqueue(meta())
+        server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes $have-${content.size - 1}/${content.size}").setBody(body(have)))
+        val out = downloader.download(job(final = "01 Song.flac", temp = "01 Song.flac.stashdpart").copy(md5State = state), dest, Recorder()) as FileOutcome.Done
+        assertTrue(out.md5Verified)
+        assertEquals(50_000L, downloader.lastResumeHashedBytes)
+        assertArrayEquals(content, File(root, "Album/01 Song.flac").readBytes())
+    }
+
+    @Test fun badOrTooNewCheckpointFallsBackToFullPrefixHash() = runTest {
+        val have = 100_000
+        partial(have)
+        val tooNew = com.abhranil.stashd.download.core.ResumableMd5().apply { update(content, 0, 200_000) }.saveState()
+        server.enqueue(meta())
+        server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes $have-${content.size - 1}/${content.size}").setBody(body(have)))
+        val out = downloader.download(job(final = "01 Song.flac", temp = "01 Song.flac.stashdpart").copy(md5State = tooNew), dest, Recorder()) as FileOutcome.Done
+        assertTrue(out.md5Verified)
+        assertEquals(have.toLong(), downloader.lastResumeHashedBytes)
+    }
 }
