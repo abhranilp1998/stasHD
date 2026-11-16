@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 interface DownloadScheduler {
     suspend fun schedule(batch: DownloadBatchEntity)
     fun unschedule(batchId: Long)
+    suspend fun isScheduled(batchId: Long): Boolean = false
 }
 
 /**
@@ -62,6 +63,18 @@ class DownloadController(
     private val destinations: DestinationFactory,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
+    /** A force-stop/Task Manager Stop can kill us without any callback. Never silently restart it. */
+    suspend fun reconcileInterrupted(userStoppedAt: Long? = null) {
+        val id = dao.activeBatchId() ?: return
+        val batch = dao.batchOnce(id) ?: return
+        if (batch.state == BatchState.PAUSED || registry.isRunning(id)) return
+        val stoppedByUser = userStoppedAt != null && batch.createdAt <= userStoppedAt
+        if (!stoppedByUser && scheduler.isScheduled(id)) return
+        dao.requeueRunning(id)
+        dao.pauseInterrupted(id)
+        if (stoppedByUser) scheduler.unschedule(id)
+    }
+
     suspend fun create(req: NewBatch): Long {
         require(req.picks.isNotEmpty()) { "Nothing selected" }
         val id = dao.createBatch(
@@ -89,6 +102,18 @@ class DownloadController(
         if (b.state != BatchState.PAUSED) return
         dao.setBatchState(batchId, BatchState.QUEUED, null, null)
         scheduler.schedule(dao.batchOnce(batchId)!!)
+    }
+
+    /** Completed files keep their URIs; only unfinished files restart when the destination changes. */
+    suspend fun restoreDestination(batchId: Long, treeUri: String) {
+        val batch = dao.batchOnce(batchId) ?: return
+        require(batch.state == BatchState.PAUSED) { "Pause the download before restoring folder access." }
+        destinations.open(treeUri).checkAccess()
+        if (batch.destTreeUri != treeUri) {
+            registry.stop(batchId)
+            deletePartials(batch)
+            dao.replaceDestination(batchId, treeUri)
+        }
     }
 
     suspend fun cancel(batchId: Long) {

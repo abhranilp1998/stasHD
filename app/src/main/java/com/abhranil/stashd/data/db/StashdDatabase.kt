@@ -34,7 +34,8 @@ class Converters {
     // v2 (M1): node identity by Drive file id + edge table. Pre-release, so destructive migration (see AppModule).
     // v3 (M1b): shortcut target columns. v4 (M2): batch/item/task schema for the downloader.
     // v5 (M3): file_task.md5State. From v4 on, upgrades use real migrations (Migrations.kt); never destructive.
-    version = 5,
+    // v6: durable file-finalization evidence and Drive parent IDs. Legacy md5State is no longer trusted.
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

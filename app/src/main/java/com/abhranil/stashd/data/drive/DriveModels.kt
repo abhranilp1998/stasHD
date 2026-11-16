@@ -49,6 +49,8 @@ interface DriveDownload : AutoCloseable {
     /** Full file size from Content-Range / Content-Length, when the server said. */
     val totalSize: Long?
     val source: okio.BufferedSource
+    /** Interrupt an in-flight body read, including a stalled socket. */
+    fun cancel() = close()
 }
 
 /** One files.list page. [incompleteSearch] is Drive's own "this result may be missing items" flag. */

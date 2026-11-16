@@ -2,6 +2,24 @@
 
 All notable changes, grouped by milestone. Dates are IST (UTC+5:30). Versions are milestone labels; from M3 `versionName` matches (`0.3.0-m3`, versionCode 3). Nothing here has been tested against real Google Drive yet (see [SETUP.md](SETUP.md)).
 
+## [0.3.1-rc.1] – 2026-11-16
+
+### Download and recovery fixes
+- Interrupt stalled HTTP body reads when pausing or cancelling, and wait for readers before file cleanup.
+- Persist file-verification information before final rename; recover a completed rename without making a duplicate.
+- Keep distinct Drive folders separate when names are identical, differ by case, or sanitize identically. Persist parent IDs for new selections.
+- Recheck actual partial-file bytes with the platform MessageDigest. Old saved MD5 states cannot hide changed prefixes; the legacy implementation remains only in test fixtures.
+- Reconcile orphaned active downloads after process death and expose consent and destination repair in Downloads. Honor Android’s user-stop exit record even when a scheduled job survives, before either scheduler resumes copying.
+- Route History retry, Download again and notification actions to the intended batch. Failed preparation can be started again.
+- Migrate schema v5→v6 without losing queues/history; installed v4→v6 upgrade and resumed file contents were checked on Android 13.
+
+### Release delivery
+- Permanent local signing key, public certificate, signed APK verification, SHA-256 manifests, 16 KB ZIP/ELF checks and repeatable release scripts.
+- Separate signed Stashd Demo package; real builds fail when OAuth/signing configuration is missing.
+- GitHub CI for unit tests, lint, debug build and native page alignment. Signing keys remain outside Git and CI.
+- Correct dark-screen text/system-bar contrast, replace fabricated welcome progress with instructions, and hide the notification design preview in release builds.
+- 177 tests and zero lint issues at the recorded local verification. Real Google/physical-phone acceptance remains separate; see docs/DEPLOY.md.
+
 ## [0.3.0-m3] – 2026-11-16 (M3 code: hardening without Cloud credentials)
 Commits `3496eb2` … `34e732b`. Not run on a phone yet (no emulator on the build box); see [docs/DEPLOY.md](docs/DEPLOY.md).
 

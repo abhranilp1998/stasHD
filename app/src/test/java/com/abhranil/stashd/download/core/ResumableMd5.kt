@@ -4,9 +4,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * MD5 (RFC 1321) whose running state can be saved and restored, so resuming a large file only hashes the
- * bytes written since the last checkpoint instead of re-reading the whole partial file.
- * (java.security.MessageDigest can't export its state.)
+ * Legacy M3 checkpoint producer retained only as a test fixture. Production uses MessageDigest and
+ * rechecks bytes on disk. Tests use this to prove that genuine old checkpoints cannot hide corruption.
  */
 class ResumableMd5 private constructor(
     private val h: IntArray,

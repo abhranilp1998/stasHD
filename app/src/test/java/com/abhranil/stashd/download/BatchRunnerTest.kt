@@ -10,6 +10,7 @@ import com.abhranil.stashd.data.db.FailureReason
 import com.abhranil.stashd.data.db.PauseReason
 import com.abhranil.stashd.data.db.StashdDatabase
 import com.abhranil.stashd.data.db.TaskState
+import com.abhranil.stashd.data.db.FileTaskEntity
 import com.abhranil.stashd.data.drive.DriveError
 import com.abhranil.stashd.download.core.BatchProgress
 import com.abhranil.stashd.download.core.BatchRunner
@@ -108,6 +109,108 @@ class BatchRunnerTest {
         controller.create(NewBatch("R", "1989 TV", listOf(PickedItem(drive.items["R"]!!, emptyList())), "dest", keep, false, false))
 
     private fun file(vararg path: String) = File(root, path.joinToString("/"))
+
+    @Test fun interruptedBatchBecomesResumableWithoutLosingItsPartial() = runTest {
+        val id = createWholeRoot()
+        dao.insertTasks(listOf(FileTaskEntity(batchId = id, sourceKey = "R", fileId = "a1", resourceKey = null,
+            dirSegments = listOf("Album"), plannedName = "track.flac", size = a1.size.toLong(), md5 = BytesDrive.md5(a1),
+            modifiedTime = 1000, state = TaskState.RUNNING, bytesDone = 123, finalName = "track.flac", tempName = "track.flac.stashdpart")))
+        dao.setBatchState(id, BatchState.RUNNING)
+        controller.reconcileInterrupted()
+        assertEquals(BatchState.PAUSED, dao.batchOnce(id)!!.state)
+        assertEquals(PauseReason.SYSTEM, dao.batchOnce(id)!!.pauseReason)
+        assertEquals(123L, dao.tasks(id).single().bytesDone)
+        assertEquals(TaskState.QUEUED, dao.tasks(id).single().state)
+        controller.resume(id)
+        assertEquals(BatchState.QUEUED, dao.batchOnce(id)!!.state)
+    }
+
+    @Test fun anExistingScheduledJobIsNotMistakenForAnInterruptedDownload() = runTest {
+        val id = createWholeRoot()
+        dao.setBatchState(id, BatchState.RUNNING)
+        val pending = object : DownloadScheduler by scheduler { override suspend fun isScheduled(batchId: Long) = true }
+        DownloadController(dao, pending, registry, destinations).reconcileInterrupted()
+        assertEquals(BatchState.RUNNING, dao.batchOnce(id)!!.state)
+    }
+
+    @Test fun aUserStopPausesEvenWhenAndroidRetainsTheJob() = runTest {
+        val id = createWholeRoot()
+        dao.setBatchState(id, BatchState.RUNNING)
+        val pending = object : DownloadScheduler by scheduler { override suspend fun isScheduled(batchId: Long) = true }
+        DownloadController(dao, pending, registry, destinations).reconcileInterrupted(userStoppedAt = 2_000)
+        assertEquals(BatchState.PAUSED, dao.batchOnce(id)!!.state)
+        assertEquals(PauseReason.SYSTEM, dao.batchOnce(id)!!.pauseReason)
+        assertEquals(listOf(id), unscheduled)
+    }
+
+    @Test fun anEarlierUserStopDoesNotPauseANewDownload() = runTest {
+        val id = createWholeRoot()
+        val pending = object : DownloadScheduler by scheduler { override suspend fun isScheduled(batchId: Long) = true }
+        DownloadController(dao, pending, registry, destinations).reconcileInterrupted(userStoppedAt = 999)
+        assertEquals(BatchState.EXPANDING, dao.batchOnce(id)!!.state)
+        assertTrue(unscheduled.isEmpty())
+    }
+
+    @Test fun restoringTheSameFolderKeepsResumeNamesAndOffsets() = runTest {
+        val id = createWholeRoot()
+        dao.insertTasks(listOf(FileTaskEntity(batchId = id, sourceKey = "R", fileId = "a1", resourceKey = null,
+            dirSegments = emptyList(), plannedName = "track.flac", size = 1000, md5 = null, modifiedTime = 0,
+            bytesDone = 123, finalName = "track.flac", tempName = "track.flac.stashdpart")))
+        controller.pause(id, PauseReason.DESTINATION_REVOKED)
+        controller.restoreDestination(id, "dest")
+        assertEquals(123L, dao.tasks(id).single().bytesDone)
+        assertEquals("track.flac.stashdpart", dao.tasks(id).single().tempName)
+    }
+
+    @Test fun replacingTheFolderResetsOnlyUnfinishedFiles() = runTest {
+        val id = createWholeRoot()
+        dao.insertTasks(listOf(
+            FileTaskEntity(batchId = id, sourceKey = "R", fileId = "a1", resourceKey = null, dirSegments = emptyList(),
+                plannedName = "partial.flac", size = 1000, md5 = null, modifiedTime = 0, bytesDone = 123,
+                finalName = "partial.flac", tempName = "partial.flac.stashdpart", verifiedBytes = 1000, verifiedMd5 = "old"),
+            FileTaskEntity(batchId = id, sourceKey = "R", fileId = "a2", resourceKey = null, dirSegments = emptyList(),
+                plannedName = "done.flac", size = 2000, md5 = null, modifiedTime = 0, bytesDone = 2000,
+                state = TaskState.DONE, finalUri = "old://done"),
+        ))
+        file("partial.flac.stashdpart").writeBytes(byteArrayOf(1))
+        controller.pause(id, PauseReason.DESTINATION_REVOKED)
+        controller.restoreDestination(id, "new-destination")
+        assertEquals("new-destination", dao.batchOnce(id)!!.destTreeUri)
+        val partial = dao.tasks(id).single { it.fileId == "a1" }
+        assertEquals(0L, partial.bytesDone)
+        assertNull(partial.finalName)
+        assertNull(partial.verifiedMd5)
+        assertFalse(file("partial.flac.stashdpart").exists())
+        val done = dao.tasks(id).single { it.fileId == "a2" }
+        assertEquals(TaskState.DONE, done.state)
+        assertEquals("old://done", done.finalUri)
+    }
+
+    @Test fun recoveryAfterRenameBeforeDatabaseCompletionDoesNotDownloadTwice() = runTest {
+        val picked = drive.items["a1"]!!
+        val id = controller.create(NewBatch("R", "Music", listOf(PickedItem(picked, emptyList())), "dest", true, false, false))
+        var killAfterRename = true
+        val destination = FileTreeDestination(root)
+        val crashingDestination = DestinationFactory {
+            object : com.abhranil.stashd.download.storage.Destination by destination {
+                override fun dir(segments: List<String>) = object : com.abhranil.stashd.download.storage.DestDir by destination.dir(segments) {
+                    override fun rename(from: String, to: String): String {
+                        val uri = destination.dir(segments).rename(from, to)
+                        if (killAfterRename) { killAfterRename = false; throw CancellationException("process killed after rename") }
+                        return uri
+                    }
+                }
+            }
+        }
+        val runner = BatchRunner(dao, drive, crashingDestination, FileDownloader(drive, Dispatchers.Unconfined, 0))
+        try { runner.run(id); fail("simulated process kill missing") } catch (_: CancellationException) {}
+        assertEquals(a1.size.toLong(), dao.tasks(id).single().verifiedBytes)
+        assertEquals(1, drive.opens.size)
+        assertEquals(RunResult.Finished(BatchState.COMPLETED), runner.run(id))
+        assertEquals(1, drive.opens.size)
+        assertEquals(1, root.listFiles()!!.size)
+        assertArrayEquals(a1, root.listFiles()!!.single().readBytes())
+    }
 
     @Test fun downloadsWholeFolderPreservingPathsDedupingAndSkippingDocs() = runTest {
         val id = createWholeRoot()

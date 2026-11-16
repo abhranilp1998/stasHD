@@ -89,21 +89,25 @@ class HistoryViewModel @Inject constructor(
     fun problems(batchId: Long): Flow<List<FileTaskEntity>> = dao.problems(batchId)
 
     /** All retry actions start a download, so they go through the same one-active-batch rule. */
-    private fun act(onStarted: () -> Unit, block: suspend () -> Unit) = viewModelScope.launch {
-        try { block(); onStarted() } catch (e: ActiveBatchExists) {
+    private fun act(onStarted: (Long) -> Unit, block: suspend () -> Long?) = viewModelScope.launch {
+        try { block()?.let(onStarted) } catch (e: ActiveBatchExists) {
             _message.value = "Another download is still active. Finish or cancel it first."
-        }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { _message.value = e.message ?: "Couldn't start this download." }
     }
 
-    fun retryFailed(batchId: Long, onStarted: () -> Unit) = act(onStarted) { controller.retryFailed(batchId) }
-    fun retryFile(taskId: Long, onStarted: () -> Unit) = act(onStarted) { controller.retryFile(taskId) }
-    fun downloadAgain(batchId: Long, onStarted: () -> Unit) = act(onStarted) { controller.restart(batchId) }
+    fun retryFailed(batchId: Long, onStarted: (Long) -> Unit) = act(onStarted) { controller.retryFailed(batchId); batchId }
+    fun retryFile(taskId: Long, onStarted: (Long) -> Unit) = act(onStarted) {
+        val task = dao.task(taskId) ?: return@act null
+        controller.retryFile(taskId); task.batchId
+    }
+    fun downloadAgain(batchId: Long, onStarted: (Long) -> Unit) = act(onStarted) { controller.restart(batchId) }
     fun forget(batchId: Long) = viewModelScope.launch { controller.forget(batchId) }
 }
 
 /** Screen 7 · History: every batch with its outcome; failed files can be retried one by one or all at once. */
 @Composable
-fun HistoryScreen(onBack: () -> Unit, onOpenDownloads: () -> Unit = {}, vm: HistoryViewModel = hiltViewModel()) {
+fun HistoryScreen(onBack: () -> Unit, onOpenDownloads: (Long) -> Unit = {}, vm: HistoryViewModel = hiltViewModel()) {
     val batches by vm.batches.collectAsState()
     val message by vm.message.collectAsState()
     val snackbar = remember { SnackbarHostState() }
@@ -141,7 +145,7 @@ fun HistoryScreen(onBack: () -> Unit, onOpenDownloads: () -> Unit = {}, vm: Hist
 }
 
 @Composable
-private fun BatchCard(s: BatchSummary, vm: HistoryViewModel, onOpenDownloads: () -> Unit) {
+private fun BatchCard(s: BatchSummary, vm: HistoryViewModel, onOpenDownloads: (Long) -> Unit) {
     val b = s.batch
     var expanded by rememberSaveable(b.id) { mutableStateOf(false) }
     val hasProblems = s.failedFiles + s.skippedTasks > 0
@@ -172,7 +176,7 @@ private fun BatchCard(s: BatchSummary, vm: HistoryViewModel, onOpenDownloads: ()
                 BatchState.CANCELLED, BatchState.FAILED -> OutlinedButton(onClick = { vm.downloadAgain(b.id, onOpenDownloads) }) {
                     Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Download again")
                 }
-                else -> if (b.state.isActive) OutlinedButton(onClick = onOpenDownloads) { Text("Open Downloads") }
+                else -> if (b.state.isActive) OutlinedButton(onClick = { onOpenDownloads(b.id) }) { Text("Open Downloads") }
             }
             Spacer(Modifier.weight(1f))
             if (!b.state.isActive) TextButton(onClick = { vm.forget(b.id) }) { Text("Remove") }

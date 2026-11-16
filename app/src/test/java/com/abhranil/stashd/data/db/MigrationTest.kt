@@ -18,11 +18,12 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class MigrationTest {
-    private val dbName = "migration-test.db"
+    private val dbName get() = ApplicationProvider.getApplicationContext<android.content.Context>()
+        .getDatabasePath("migration-test.db").absolutePath
 
     @get:Rule val helper = MigrationTestHelper(InstrumentationRegistry.getInstrumentation(), StashdDatabase::class.java)
 
-    @Test fun v4ToV5KeepsBatchesTasksAndCache() = runTest {
+    @Test fun v4ToCurrentKeepsBatchesTasksAndCache() = runTest {
         helper.createDatabase(dbName, 4).use { db ->
             db.execSQL("INSERT INTO drive_root (folderId, resourceKey, name, totalBytes, folderCount, fileCount, lastOpenedAt) VALUES ('R', NULL, 'Music', 10, 1, 2, 5)")
             db.execSQL(
@@ -34,7 +35,7 @@ class MigrationTest {
                     "VALUES (1, 7, 'R', 'f1', NULL, '[\"Album\"]', 'a.flac', 'a.flac', 'a.flac.stashdpart', 1000, 'abc', 3, 0, 400, 'QUEUED', 1, NULL, NULL, NULL, 2, NULL)",
             )
         }
-        helper.runMigrationsAndValidate(dbName, 5, true, *StashdMigrations.ALL).close()
+        helper.runMigrationsAndValidate(dbName, 6, true, *StashdMigrations.ALL).close()
 
         val room = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), StashdDatabase::class.java, dbName)
             .addMigrations(*StashdMigrations.ALL).allowMainThreadQueries().build()
@@ -47,13 +48,15 @@ class MigrationTest {
             assertEquals("a.flac.stashdpart", t.tempName)
             assertEquals(listOf("Album"), t.dirSegments)
             assertNull(t.md5State) // new column, filled on the next checkpoint
+            assertNull(t.verifiedBytes)
+            assertNull(t.verifiedMd5)
             assertEquals(1, room.driveRootDao().recent().first().size)
         } finally { room.close() }
     }
 
     @Test fun everyVersionFromFourHasAMigrationPath() {
         val covered = StashdMigrations.ALL.map { it.startVersion to it.endVersion }.toSet()
-        val current = 5
+        val current = 6
         for (v in 4 until current) assertEquals("missing migration $v -> ${v + 1}", true, (v to v + 1) in covered)
     }
 }

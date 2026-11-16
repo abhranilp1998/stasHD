@@ -55,6 +55,7 @@ class SafDestination(private val context: Context, private val treeUri: Uri) : D
 
         override fun list(): Map<String, Long> = guard { entries().mapValues { it.value.length() } }
         override fun size(name: String): Long? = guard { entries()[name]?.length() }
+        override fun uri(name: String): String? = guard { entries()[name]?.uri?.toString() }
 
         override fun openWrite(name: String, append: Boolean): OutputStream = guard {
             val f = entries()[name] ?: (doc.createFile("application/octet-stream", name)

@@ -26,12 +26,14 @@ class DownloadExecution @Inject constructor(
     private val bus: ProgressBus,
     private val notifier: DownloadNotifier,
     private val dao: DownloadDao,
+    private val recovery: DownloadStartupRecovery,
 ) {
     suspend fun execute(batchId: Long, showForeground: suspend (id: Int, n: Notification) -> Unit): RunResult {
         val batch = dao.batchOnce(batchId) ?: return RunResult.NotRunnable
         val title = batch.rootName
         notifier.clearResult()
         showForeground(DownloadNotifier.NOTIFICATION_ID, notifier.progress(ProgressSnapshot(batchId = batchId, expanding = true), title))
+        recovery.recover()
         var lastPost = 0L
         try {
             val result = registry.run(batchId) {

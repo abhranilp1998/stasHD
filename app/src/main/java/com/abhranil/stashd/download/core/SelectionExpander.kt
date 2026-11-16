@@ -5,7 +5,7 @@ import com.abhranil.stashd.data.drive.DriveRepository
 import com.abhranil.stashd.data.storage.NameSanitizer
 
 /** What the user picked: an item plus the folder names from the linked root down to its parent (root excluded). */
-data class PickedItem(val item: DriveItem, val parentNames: List<String>)
+data class PickedItem(val item: DriveItem, val parentNames: List<String>, val parentIds: List<String> = emptyList())
 
 /** One file to download, with its destination path relative to the chosen folder. */
 data class PlannedFile(
@@ -46,7 +46,7 @@ class ExpansionIncomplete(folder: String) : Exception("Drive returned an incompl
  */
 class SelectionExpander(private val drive: DriveRepository) {
 
-    private data class FolderWork(val id: String, val resourceKey: String?, val name: String, val dirs: List<String>, val sourceKey: String, val via: Boolean)
+    private data class FolderWork(val id: String, val resourceKey: String?, val name: String, val dirs: List<String>, val keys: List<String>, val sourceKey: String, val via: Boolean)
     private data class Candidate(val file: PlannedFile, val depth: Int, val order: Int)
 
     suspend fun expand(
@@ -60,6 +60,31 @@ class SelectionExpander(private val drive: DriveRepository) {
         val viaShortcut = ArrayDeque<FolderWork>()
         val visited = HashSet<String>()
         var scanned = 0
+        val allocatedDirs = HashMap<List<String>, List<String>>()
+        val taken = HashMap<List<String>, MutableSet<String>>()
+
+        fun allocateDir(parent: List<String>, keys: List<String>, name: String): List<String> {
+            if (!keepStructure) return emptyList()
+            return allocatedDirs.getOrPut(keys) {
+                val used = taken.getOrPut(parent) { HashSet() }
+                val safe = NameSanitizer.dedupe(NameSanitizer.sanitize(name), used)
+                used += safe
+                parent + safe
+            }
+        }
+
+        fun parents(p: PickedItem): Pair<List<String>, List<String>> {
+            if (!keepStructure) return emptyList<String>() to emptyList()
+            var dirs = emptyList<String>()
+            var keys = emptyList<String>()
+            p.parentNames.forEachIndexed { i, name ->
+                // Old saved picks have names only. New picks retain Drive IDs, distinguishing even
+                // identically named sibling folders. Keep the fallback stable for old batches.
+                keys = keys + (p.parentIds.getOrNull(i)?.let { "id:$it" } ?: "name:$name")
+                dirs = allocateDir(dirs, keys, name)
+            }
+            return dirs to keys
+        }
 
         suspend fun addFile(item: DriveItem, dirs: List<String>, sourceKey: String, via: Boolean) {
             val viaHere = via || item.isShortcut
@@ -80,12 +105,14 @@ class SelectionExpander(private val drive: DriveRepository) {
         }
 
         fun enqueue(w: FolderWork) = if (w.via) viaShortcut.addLast(w) else main.addLast(w)
-        fun dirsFor(parent: List<String>, child: String) = if (keepStructure) parent + child else emptyList()
 
         // Real items first, shortcuts after, so a real occurrence wins the dedup.
         for (p in picks.sortedBy { it.item.isShortcut }) {
-            val parentDirs = if (keepStructure) p.parentNames else emptyList()
-            if (p.item.isFolder) enqueue(FolderWork(p.item.targetId, p.item.targetResourceKey, p.item.name, dirsFor(parentDirs, p.item.name), p.item.id, p.item.isShortcut))
+            val (parentDirs, parentKeys) = parents(p)
+            if (p.item.isFolder) {
+                val keys = parentKeys + "id:${p.item.targetId}"
+                enqueue(FolderWork(p.item.targetId, p.item.targetResourceKey, p.item.name, allocateDir(parentDirs, keys, p.item.name), keys, p.item.id, p.item.isShortcut))
+            }
             else addFile(p.item, parentDirs, p.item.id, false)
         }
 
@@ -97,7 +124,10 @@ class SelectionExpander(private val drive: DriveRepository) {
                 val listing = drive.listChildren(w.id, w.resourceKey, token)
                 if (listing.incompleteSearch) throw ExpansionIncomplete(w.name)
                 for (child in listing.items) {
-                    if (child.isFolder) enqueue(FolderWork(child.targetId, child.targetResourceKey, child.name, dirsFor(w.dirs, child.name), w.sourceKey, w.via || child.isShortcut))
+                    if (child.isFolder) {
+                        val keys = w.keys + "id:${child.targetId}"
+                        enqueue(FolderWork(child.targetId, child.targetResourceKey, child.name, allocateDir(w.dirs, keys, child.name), keys, w.sourceKey, w.via || child.isShortcut))
+                    }
                     else addFile(child, w.dirs, w.sourceKey, w.via)
                 }
                 token = listing.nextPageToken
@@ -113,9 +143,8 @@ class SelectionExpander(private val drive: DriveRepository) {
         val duplicates = candidates.size - winners.size
 
         // Sanitize + per-directory unique names (case-insensitive), stable in listing order.
-        val taken = HashMap<List<String>, MutableSet<String>>()
         val files = winners.map { c ->
-            val dirs = c.file.dirSegments.map(NameSanitizer::sanitize)
+            val dirs = c.file.dirSegments
             val used = taken.getOrPut(dirs) { HashSet() }
             val name = NameSanitizer.dedupe(NameSanitizer.sanitize(c.file.name), used)
             used += name
