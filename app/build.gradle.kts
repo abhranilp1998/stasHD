@@ -31,11 +31,33 @@ android {
         buildConfigField("boolean", "FORCE_FAKE_DRIVE", fakeDrive.toString())
     }
 
+    // Release signing. NO keystore lives in this repo. TODO(release-signing): create one once (see docs/DEPLOY.md,
+    //   "Release signing"), keep it and its passwords OUTSIDE the repo, back it up (losing it means users must
+    //   uninstall to update), and put these four in ~/.gradle/gradle.properties:
+    //     stashd.release.storeFile=/absolute/path/stashd-release.jks
+    //     stashd.release.storePassword=...
+    //     stashd.release.keyAlias=stashd
+    //     stashd.release.keyPassword=...
+    // TODO(cloud-setup): the release key's SHA-1 needs its OWN Android OAuth client entry (see SETUP.md);
+    //   the debug SHA-1 doesn't cover release builds.
+    // Without the properties, assembleRelease still builds (and runs R8) but the APK is unsigned.
+    val releaseStoreFile = (project.findProperty("stashd.release.storeFile") as String?)?.takeIf { it.isNotBlank() }
+    signingConfigs {
+        if (releaseStoreFile != null) create("release") {
+            storeFile = file(releaseStoreFile)
+            storePassword = project.findProperty("stashd.release.storePassword") as String?
+            keyAlias = project.findProperty("stashd.release.keyAlias") as String?
+            keyPassword = project.findProperty("stashd.release.keyPassword") as String?
+        }
+    }
+
     buildTypes {
         release {
             buildConfigField("boolean", "FORCE_FAKE_DRIVE", "false")
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (releaseStoreFile != null) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
