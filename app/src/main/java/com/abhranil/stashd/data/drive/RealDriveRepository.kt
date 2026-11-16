@@ -86,7 +86,8 @@ class RealDriveRepository @Inject constructor(
             .addQueryParameter("alt", "media")
             .addQueryParameter("supportsAllDrives", "true")
             .build()
-        val response = execute(url, ResourceKeys.header(fileId to resourceKey)) {
+        var transferCall: Call? = null
+        val response = execute(url, ResourceKeys.header(fileId to resourceKey), onCall = { transferCall = it }) {
             // identity: no transparent gzip, so byte offsets and Content-Length mean what they say.
             header("Accept-Encoding", "identity")
             if (fromByte > 0) header("Range", "bytes=$fromByte-")
@@ -98,9 +99,9 @@ class RealDriveRepository @Inject constructor(
                     val m = cr?.let(CONTENT_RANGE::matchEntire)
                     val start = m?.groupValues?.get(1)?.toLongOrNull()
                     if (start != fromByte) throw DriveError.RangeMismatch(fromByte, cr)
-                    return Download(response, start, m.groupValues[3].toLongOrNull())
+                    return Download(response, start, m.groupValues[3].toLongOrNull(), transferCall!!)
                 }
-                200 -> return Download(response, 0L, response.body?.contentLength()?.takeIf { it >= 0 })
+                200 -> return Download(response, 0L, response.body?.contentLength()?.takeIf { it >= 0 }, transferCall!!)
                 416 -> throw DriveError.RangeNotSatisfiable(response.header("Content-Range")?.substringAfter('/')?.toLongOrNull())
                 else -> throw errorFor(response, fileId)
             }
@@ -110,9 +111,12 @@ class RealDriveRepository @Inject constructor(
         }
     }
 
-    private class Download(private val response: Response, override val offset: Long, override val totalSize: Long?) : DriveDownload {
+    private class Download(private val response: Response, override val offset: Long, override val totalSize: Long?, private val call: Call) : DriveDownload {
         override val source = response.body!!.source()
         override fun close() = response.close()
+        // Call.cancel closes the socket. The downloader closes the buffered body after its reader exits;
+        // closing it concurrently with read would violate Okio's timeout/buffer invariants.
+        override fun cancel() { call.cancel() }
     }
 
     private suspend fun <T> get(url: HttpUrl, resourceKeyHeader: String?, id: String, parse: (String) -> T): T =
@@ -122,7 +126,7 @@ class RealDriveRepository @Inject constructor(
         }
 
     /** Authorized request; on 401 clears the token and retries once. Returns an OPEN response (caller closes). */
-    private suspend fun execute(url: HttpUrl, resourceKeyHeader: String?, extra: Request.Builder.() -> Unit = {}): Response {
+    private suspend fun execute(url: HttpUrl, resourceKeyHeader: String?, onCall: (Call) -> Unit = {}, extra: Request.Builder.() -> Unit = {}): Response {
         var token = tokens.token()
         for (attempt in 0..1) {
             val request = Request.Builder().url(url)
@@ -130,7 +134,9 @@ class RealDriveRepository @Inject constructor(
                 .apply { if (resourceKeyHeader != null) header(ResourceKeys.HEADER, resourceKeyHeader) }
                 .apply(extra)
                 .build()
-            val response = client.newCall(request).await()
+            val call = client.newCall(request)
+            onCall(call)
+            val response = call.await()
             if (response.code == 401 && attempt == 0) {
                 response.close()
                 tokens.invalidate(token)

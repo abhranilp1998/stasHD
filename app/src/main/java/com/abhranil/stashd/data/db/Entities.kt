@@ -141,6 +141,8 @@ data class DownloadItemEntity(
     /** Folder names from the linked root to the pick's parent (root excluded). */
     val parentNames: List<String>,
     val sortOrder: Int,
+    @androidx.room.ColumnInfo(defaultValue = "'[]'")
+    val parentIds: List<String> = emptyList(),
 )
 
 /** One row per file: resume point (bytesDone + tempName) and retry target. (batchId, fileId) is unique = DB-level dedup. */
@@ -171,8 +173,11 @@ data class FileTaskEntity(
     val finalUri: String? = null,
     val startedAt: Long? = null,
     val finishedAt: Long? = null,
-    /** v5: ResumableMd5 checkpoint of the temp file's prefix, so a resume needn't re-hash it all. */
+    /** Legacy v5 checkpoint. Kept for schema compatibility; current downloads rehash partial bytes. */
     val md5State: String? = null,
+    /** Verification saved before the final rename, to recover without creating another copy. */
+    val verifiedBytes: Long? = null,
+    val verifiedMd5: String? = null,
 )
 
 /** One History card: the batch plus its per-file outcome counts. */

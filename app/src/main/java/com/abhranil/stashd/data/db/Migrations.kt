@@ -15,5 +15,13 @@ object StashdMigrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_4_5)
+    val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `file_task` ADD COLUMN `verifiedBytes` INTEGER")
+            db.execSQL("ALTER TABLE `file_task` ADD COLUMN `verifiedMd5` TEXT")
+            db.execSQL("ALTER TABLE `download_item` ADD COLUMN `parentIds` TEXT NOT NULL DEFAULT '[]'")
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(MIGRATION_4_5, MIGRATION_5_6)
 }

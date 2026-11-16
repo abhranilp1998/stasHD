@@ -7,6 +7,15 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+fun setting(property: String, environment: String): String? =
+    providers.environmentVariable(environment).orElse(providers.gradleProperty(property)).orNull
+
+val oauthWebClientId = setting("stashd.webClientId", "STASHD_WEB_CLIENT_ID")?.trim().orEmpty()
+val releaseStorePath = setting("stashd.release.storeFile", "STASHD_RELEASE_STORE_FILE")?.takeIf { it.isNotBlank() }
+val releaseStoreSecret = setting("stashd.release.storePassword", "STASHD_RELEASE_STORE_PASSWORD")
+val releaseAlias = setting("stashd.release.keyAlias", "STASHD_RELEASE_KEY_ALIAS")
+val releaseKeySecret = setting("stashd.release.keyPassword", "STASHD_RELEASE_KEY_PASSWORD")
+
 android {
     namespace = "com.abhranil.stashd"
     // Libraries in the catalog need compileSdk 36; the app still targets 35.
@@ -16,38 +25,36 @@ android {
         applicationId = "com.abhranil.stashd"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0-m3"
+        versionCode = 4
+        versionName = "0.3.1-rc.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // TODO(cloud-setup): Web OAuth client ID. Empty placeholder = demo mode. Set stashd.webClientId in
         //   ~/.gradle/gradle.properties (never in the repo); it becomes BuildConfig.WEB_CLIENT_ID.
         // TODO(cloud-setup): the Android OAuth client must list package com.abhranil.stashd + the SHA-1 of the
         //   keystore that signs THIS build (debug: ~/.android/debug.keystore on the building machine).
         //   Get it with `./gradlew signingReport` (Variant: debug → SHA1). Each build machine needs its own entry.
-        val webClientId = (project.findProperty("stashd.webClientId") as String?)?.trim() ?: ""
-        buildConfigField("String", "WEB_CLIENT_ID", "\"$webClientId\"")
+        require(oauthWebClientId.isEmpty() || oauthWebClientId.matches(Regex("[0-9]+-[A-Za-z0-9_-]+\\.apps\\.googleusercontent\\.com"))) { "stashd.webClientId must be an OAuth Web client ID." }
+        buildConfigField("String", "WEB_CLIENT_ID", "\"$oauthWebClientId\"")
         // Debug aid: stashd.fakeDrive=true forces the sample-data repository even when a client ID is set.
         val fakeDrive = (project.findProperty("stashd.fakeDrive") as String?)?.toBoolean() ?: false
         buildConfigField("boolean", "FORCE_FAKE_DRIVE", fakeDrive.toString())
     }
 
-    // Release signing. NO keystore lives in this repo. TODO(release-signing): create one once (see docs/DEPLOY.md,
-    //   "Release signing"), keep it and its passwords OUTSIDE the repo, back it up (losing it means users must
-    //   uninstall to update), and put these four in ~/.gradle/gradle.properties:
+    // Release signing stays outside this repo. See docs/RELEASING.md for the local signing scripts and backup.
+    // Gradle properties can also supply the following settings:
     //     stashd.release.storeFile=/absolute/path/stashd-release.jks
     //     stashd.release.storePassword=...
     //     stashd.release.keyAlias=stashd
     //     stashd.release.keyPassword=...
     // TODO(cloud-setup): the release key's SHA-1 needs its OWN Android OAuth client entry (see SETUP.md);
     //   the debug SHA-1 doesn't cover release builds.
-    // Without the properties, assembleRelease still builds (and runs R8) but the APK is unsigned.
-    val releaseStoreFile = (project.findProperty("stashd.release.storeFile") as String?)?.takeIf { it.isNotBlank() }
+    // Release tasks reject missing signing configuration; real-Drive releases also require the Web client ID.
     signingConfigs {
-        if (releaseStoreFile != null) create("release") {
-            storeFile = file(releaseStoreFile)
-            storePassword = project.findProperty("stashd.release.storePassword") as String?
-            keyAlias = project.findProperty("stashd.release.keyAlias") as String?
-            keyPassword = project.findProperty("stashd.release.keyPassword") as String?
+        if (releaseStorePath != null) create("release") {
+            storeFile = file(releaseStorePath)
+            storePassword = releaseStoreSecret
+            keyAlias = releaseAlias
+            keyPassword = releaseKeySecret
         }
     }
 
@@ -57,7 +64,16 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (releaseStoreFile != null) signingConfig = signingConfigs.getByName("release")
+            if (releaseStorePath != null) signingConfig = signingConfigs.getByName("release")
+        }
+        create("demoRelease") {
+            initWith(getByName("release"))
+            matchingFallbacks += "release"
+            applicationIdSuffix = ".demo"
+            versionNameSuffix = "-demo"
+            buildConfigField("String", "WEB_CLIENT_ID", "\"\"")
+            buildConfigField("boolean", "FORCE_FAKE_DRIVE", "true")
+            resValue("string", "app_name", "Stashd Demo")
         }
     }
     compileOptions {
@@ -81,6 +97,21 @@ android {
         disable += setOf("OldTargetApi", "GradleDependency", "AndroidGradlePluginVersion", "NewerVersionAvailable")
     }
 }
+
+fun verifySigning() {
+    require(releaseStorePath != null && file(releaseStorePath).isFile) { "A permanent release keystore is required. See docs/RELEASING.md." }
+    require(!releaseStoreSecret.isNullOrEmpty() && !releaseAlias.isNullOrBlank() && !releaseKeySecret.isNullOrEmpty()) { "Release signing credentials are incomplete. See docs/RELEASING.md." }
+}
+
+val verifyReleaseConfiguration = tasks.register("verifyReleaseConfiguration") {
+    doLast {
+        verifySigning()
+        require(oauthWebClientId.isNotBlank()) { "Real-Drive releases require STASHD_WEB_CLIENT_ID. Use assembleDemoRelease for the separately labelled demo." }
+    }
+}
+val verifyDemoSigning = tasks.register("verifyDemoSigning") { doLast { verifySigning() } }
+tasks.matching { it.name == "preReleaseBuild" }.configureEach { dependsOn(verifyReleaseConfiguration) }
+tasks.matching { it.name == "preDemoReleaseBuild" }.configureEach { dependsOn(verifyDemoSigning) }
 
 kotlin {
     jvmToolchain(17)

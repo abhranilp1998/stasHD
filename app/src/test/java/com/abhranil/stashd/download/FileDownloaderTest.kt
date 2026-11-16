@@ -14,6 +14,12 @@ import com.abhranil.stashd.download.storage.FileTreeDestination
 import com.abhranil.stashd.download.storage.StorageError
 import com.abhranil.stashd.testing.FakeTokenProvider
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -200,9 +206,60 @@ class FileDownloaderTest {
     }
 
     @Test fun revokedDestinationFailsFast() = runTest {
-        root.setWritable(false)
-        try { downloader.download(job(), dest, Recorder()); fail() } catch (_: StorageError.AccessRevoked) {} finally { root.setWritable(true) }
+        val revoked = object : com.abhranil.stashd.download.storage.Destination by dest {
+            override fun checkAccess() { throw StorageError.AccessRevoked("grant revoked") }
+        }
+        try { downloader.download(job(), revoked, Recorder()); fail() } catch (_: StorageError.AccessRevoked) {}
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun completedRenameIsAdoptedAfterCrashWithoutAnotherDownload() = runTest {
+        File(root, "Album").mkdirs()
+        File(root, "Album/01 Song.flac").writeBytes(content)
+        val out = downloader.download(job(final = "01 Song.flac", temp = "01 Song.flac.stashdpart"), dest, Recorder()) as FileOutcome.Done
+        assertEquals("01 Song.flac", out.finalName)
+        assertEquals(0, server.requestCount)
+        assertEquals(listOf("01 Song.flac"), File(root, "Album").list()!!.toList())
+    }
+
+    @Test fun cancelInterruptsAnActualStalledHttpBodyAndKeepsThePartial() = runBlocking {
+        // The server sends one byte, advertises the whole file, and leaves the connection open.
+        server.enqueue(MockResponse().setBody(Buffer().writeByte(content[0].toInt())).setHeader("Content-Length", content.size))
+        val firstByte = CompletableDeferred<Unit>()
+        val listener = object : FileJobListener {
+            override suspend fun namesClaimed(finalName: String, tempName: String) {}
+            override suspend fun remoteChanged(now: RemoteFingerprint) {}
+            override suspend fun progress(bytesDone: Long) { if (bytesDone > 0) firstByte.complete(Unit) }
+        }
+        val transfer = launch(Dispatchers.IO) { downloader.download(job(), dest, listener) }
+        try {
+            withTimeout(5_000) { firstByte.await() }
+            transfer.cancel()
+            withTimeout(2_000) { transfer.join() }
+            assertTrue(File(root, "Album/01 Song.flac.stashdpart").exists())
+            assertFalse(File(root, "Album/01 Song.flac").exists())
+        } finally { transfer.cancelAndJoin() }
+    }
+
+    @Test fun renameJournalAlsoRecoversFilesWithoutRemoteMd5() = runTest {
+        File(root, "Album").mkdirs()
+        File(root, "Album/01 Song.flac").writeBytes(content)
+        val pending = job(expected = fp.copy(md5 = null), final = "01 Song.flac", temp = "01 Song.flac.stashdpart")
+            .copy(verifiedBytes = content.size.toLong(), verifiedMd5 = md5)
+        val out = downloader.download(pending, dest, Recorder()) as FileOutcome.Done
+        assertFalse(out.md5Verified)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun unrelatedSameSizeFinalFileIsNotAdopted() = runTest {
+        File(root, "Album").mkdirs()
+        val unrelated = content.reversedArray()
+        File(root, "Album/01 Song.flac").writeBytes(unrelated)
+        server.enqueue(MockResponse().setBody(body()))
+        val out = downloader.download(job(final = "01 Song.flac", temp = "01 Song.flac.stashdpart"), dest, Recorder()) as FileOutcome.Done
+        assertEquals("01 Song (2).flac", out.finalName)
+        assertArrayEquals(unrelated, File(root, "Album/01 Song.flac").readBytes())
+        assertArrayEquals(content, File(root, "Album/01 Song (2).flac").readBytes())
     }
 
     @Test fun googleDocDiscoveredAtResumeIsNotDownloadable() = runTest {
@@ -211,7 +268,7 @@ class FileDownloaderTest {
         try { downloader.download(job(final = "01 Song.flac", temp = "01 Song.flac.stashdpart"), dest, Recorder()); fail() } catch (_: DriveError.NotDownloadable) {}
     }
 
-    @Test fun resumeWithMd5CheckpointOnlyRehashesTheTail() = runTest {
+    @Test fun resumeRechecksActualBytesEvenWhenAnOldMd5CheckpointExists() = runTest {
         val have = 250_000
         partial(have)
         // Checkpoint taken at 200 000 bytes (the last 50 000 were written after it).
@@ -220,7 +277,7 @@ class FileDownloaderTest {
         server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes $have-${content.size - 1}/${content.size}").setBody(body(have)))
         val out = downloader.download(job(final = "01 Song.flac", temp = "01 Song.flac.stashdpart").copy(md5State = state), dest, Recorder()) as FileOutcome.Done
         assertTrue(out.md5Verified)
-        assertEquals(50_000L, downloader.lastResumeHashedBytes)
+        assertEquals(have.toLong(), downloader.lastResumeHashedBytes)
         assertArrayEquals(content, File(root, "Album/01 Song.flac").readBytes())
     }
 
@@ -233,5 +290,20 @@ class FileDownloaderTest {
         val out = downloader.download(job(final = "01 Song.flac", temp = "01 Song.flac.stashdpart").copy(md5State = tooNew), dest, Recorder()) as FileOutcome.Done
         assertTrue(out.md5Verified)
         assertEquals(have.toLong(), downloader.lastResumeHashedBytes)
+    }
+
+    @Test fun changedPrefixCannotHideBehindASavedMd5Checkpoint() = runTest {
+        val have = 250_000
+        partial(have)
+        val checkpoint = com.abhranil.stashd.download.core.ResumableMd5().apply { update(content, 0, 200_000) }.saveState()
+        val corrupt = content.copyOf(have).also { it[1] = (it[1] + 1).toByte() }
+        File(root, "Album/01 Song.flac.stashdpart").writeBytes(corrupt)
+        server.enqueue(meta())
+        server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes $have-${content.size - 1}/${content.size}").setBody(body(have)))
+        try {
+            downloader.download(job(final = "01 Song.flac", temp = "01 Song.flac.stashdpart").copy(md5State = checkpoint), dest, Recorder())
+            fail("a corrupt prefix was accepted")
+        } catch (_: ChecksumMismatch) {}
+        assertFalse(File(root, "Album/01 Song.flac").exists())
     }
 }

@@ -340,7 +340,9 @@ class BrowserViewModel @Inject constructor(
     val startError: StateFlow<String?> = _startError.asStateFlow()
 
     /** Selections as batch picks: parent names from the linked root (excluded) down to where each was picked. */
-    fun picks(): List<PickedItem> = _state.value.selected.values.map { sel -> PickedItem(sel.item, sel.path.drop(1).map { it.name }) }
+    fun picks(): List<PickedItem> = _state.value.selected.values.map { sel ->
+        PickedItem(sel.item, sel.path.drop(1).map { it.name }, sel.path.drop(1).map { it.id })
+    }
 
     /** "Start download" (covers "Download this folder" too: it's just a selection). One active batch at a time. */
     fun startDownload(onStarted: () -> Unit) {

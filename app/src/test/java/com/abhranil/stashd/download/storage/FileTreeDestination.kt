@@ -28,6 +28,7 @@ class FileTreeDestination(
     private class Dir(val d: File) : DestDir {
         override fun list(): Map<String, Long> = d.listFiles().orEmpty().associate { it.name to it.length() }
         override fun size(name: String): Long? = File(d, name).takeIf { it.exists() }?.length()
+        override fun uri(name: String): String? = File(d, name).takeIf { it.isFile }?.path
         override fun openWrite(name: String, append: Boolean): OutputStream = FileOutputStream(File(d, name), append)
         override fun openRead(name: String): InputStream = FileInputStream(File(d, name))
         override fun delete(name: String) { File(d, name).delete() }

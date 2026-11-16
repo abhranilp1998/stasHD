@@ -30,6 +30,8 @@ interface DestDir {
     /** Existing entries: name → size. */
     fun list(): Map<String, Long>
     fun size(name: String): Long?
+    /** URI of an existing file, used to reconcile a rename completed before a process kill. */
+    fun uri(name: String): String?
     /** Opens [name] for writing (created if missing); [append] keeps existing bytes. */
     fun openWrite(name: String, append: Boolean): OutputStream
     fun openRead(name: String): InputStream

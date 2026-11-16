@@ -91,6 +91,18 @@ interface DownloadDao {
 
     @Query("SELECT id FROM download_batch WHERE state IN ('EXPANDING','QUEUED','RUNNING','PAUSED') ORDER BY id LIMIT 1")
     suspend fun activeBatchId(): Long?
+    @Query("UPDATE download_batch SET state = 'PAUSED', pauseReason = 'SYSTEM', message = 'Download was interrupted. Tap Resume to continue.' WHERE id = :batchId AND state IN ('EXPANDING','QUEUED','RUNNING')")
+    suspend fun pauseInterrupted(batchId: Long): Int
+    @Query("UPDATE download_batch SET destTreeUri = :uri, pauseReason = 'USER', message = NULL WHERE id = :batchId AND state = 'PAUSED'")
+    suspend fun updateDestination(batchId: Long, uri: String)
+    @Query("UPDATE file_task SET state = 'QUEUED', bytesDone = 0, finalName = NULL, tempName = NULL, md5State = NULL, verifiedBytes = NULL, verifiedMd5 = NULL, attempts = 0 WHERE batchId = :batchId AND state IN ('QUEUED','RUNNING')")
+    suspend fun resetUnfinishedForDestination(batchId: Long)
+    @Transaction
+    suspend fun replaceDestination(batchId: Long, uri: String) {
+        check(batchOnce(batchId)?.state == BatchState.PAUSED) { "Pause the download before changing its folder." }
+        resetUnfinishedForDestination(batchId)
+        updateDestination(batchId, uri)
+    }
 
     /** Creates a batch + its picks. Enforces ONE active batch atomically (check and insert in one transaction). */
     @Transaction
@@ -105,7 +117,7 @@ interface DownloadDao {
     @Query("SELECT * FROM download_batch WHERE id = :id") fun batch(id: Long): Flow<DownloadBatchEntity?>
     @Query("SELECT * FROM download_batch WHERE state IN ('EXPANDING','QUEUED','RUNNING','PAUSED') ORDER BY id LIMIT 1")
     fun activeBatch(): Flow<DownloadBatchEntity?>
-    @Query("SELECT * FROM download_batch ORDER BY createdAt DESC") fun history(): Flow<List<DownloadBatchEntity>>
+    @Query("SELECT * FROM download_batch ORDER BY createdAt DESC, id DESC") fun history(): Flow<List<DownloadBatchEntity>>
     @Query(
         """
         SELECT b.*,
@@ -150,8 +162,10 @@ interface DownloadDao {
     @Query("UPDATE file_task SET bytesDone = :bytes WHERE id = :taskId") suspend fun setBytes(taskId: Long, bytes: Long)
     @Query("UPDATE file_task SET finalName = :finalName, tempName = :tempName WHERE id = :taskId")
     suspend fun claimNames(taskId: Long, finalName: String, tempName: String)
+    @Query("UPDATE file_task SET finalName = :finalName, tempName = :tempName, verifiedBytes = :bytes, verifiedMd5 = :md5 WHERE id = :taskId")
+    suspend fun prepareFinalization(taskId: Long, finalName: String, tempName: String, bytes: Long, md5: String)
     @Query("UPDATE file_task SET md5State = :state WHERE id = :taskId") suspend fun saveMd5State(taskId: Long, state: String?)
-    @Query("UPDATE file_task SET size = :size, md5 = :md5, modifiedTime = :modified, bytesDone = 0, md5State = NULL WHERE id = :taskId")
+    @Query("UPDATE file_task SET size = :size, md5 = :md5, modifiedTime = :modified, bytesDone = 0, md5State = NULL, verifiedBytes = NULL, verifiedMd5 = NULL WHERE id = :taskId")
     suspend fun remoteChanged(taskId: Long, size: Long?, md5: String?, modified: Long)
     @Query("UPDATE file_task SET state = 'RUNNING', startedAt = COALESCE(startedAt, :now) WHERE id = :taskId")
     suspend fun markRunning(taskId: Long, now: Long)

@@ -32,6 +32,39 @@ class SelectionExpanderTest {
 
     private val rootItem = folder("ROOT", "Music")
 
+    @Test fun distinctFoldersWhoseNamesSanitizeTheSameStaySeparate() = runTest {
+        drive.pages["ROOT"] = listOf(listOf(folder("left", "Disc/1"), folder("right", "Disc:1")))
+        drive.pages["left"] = listOf(listOf(file("a", "track.flac")))
+        drive.pages["right"] = listOf(listOf(file("b", "track.flac")))
+        val result = expander.expand(listOf(PickedItem(rootItem, emptyList())), true)
+        assertEquals(listOf("Music", "Disc_1"), result.files.single { it.fileId == "a" }.dirSegments)
+        assertEquals(listOf("Music", "Disc_1 (2)"), result.files.single { it.fileId == "b" }.dirSegments)
+    }
+
+    @Test fun identicalFolderNamesAndCaseVariantsKeepTheirIdentity() = runTest {
+        drive.pages["ROOT"] = listOf(listOf(folder("a", "Album"), folder("b", "Album"), folder("c", "ALBUM")))
+        for (id in listOf("a", "b", "c")) drive.pages[id] = listOf(listOf(file("track-$id")))
+        val result = expander.expand(listOf(PickedItem(rootItem, emptyList())), true)
+        assertEquals(3, result.files.map { it.dirSegments.map(String::lowercase) }.distinct().size)
+    }
+
+    @Test fun filesPickedInsideIdenticallyNamedFoldersKeepTheirParentIds() = runTest {
+        val result = expander.expand(listOf(
+            PickedItem(file("a"), listOf("Album"), listOf("left")),
+            PickedItem(file("b"), listOf("Album"), listOf("right")),
+        ), true)
+        assertEquals(listOf("Album"), result.files[0].dirSegments)
+        assertEquals(listOf("Album (2)"), result.files[1].dirSegments)
+    }
+
+    @Test fun fileAndDirectoryCannotClaimTheSameDestinationName() = runTest {
+        drive.pages["ROOT"] = listOf(listOf(file("f", "Album"), folder("a", "Album")))
+        drive.pages["a"] = listOf(listOf(file("track")))
+        val result = expander.expand(listOf(PickedItem(rootItem, emptyList())), true)
+        assertEquals("Album (2)", result.files.single { it.fileId == "f" }.name)
+        assertEquals(listOf("Music", "Album"), result.files.single { it.fileId == "track" }.dirSegments)
+    }
+
     @Test fun preservesRelativePathsRecursively() = runTest {
         val r = expander.expand(listOf(PickedItem(folder("A", "Album", rk = "0-kA"), emptyList())), keepStructure = true)
         assertEquals(

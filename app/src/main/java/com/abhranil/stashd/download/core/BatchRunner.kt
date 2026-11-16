@@ -230,6 +230,8 @@ class BatchRunner(
         override suspend fun namesClaimed(finalName: String, tempName: String) = dao.claimNames(taskId, finalName, tempName)
         override suspend fun remoteChanged(now: RemoteFingerprint) = dao.remoteChanged(taskId, now.size, now.md5, now.modifiedTime)
         override suspend fun checkpoint(md5State: String?) = dao.saveMd5State(taskId, md5State)
+        override suspend fun finalizationReady(finalName: String, tempName: String, bytes: Long, md5: String) =
+            dao.prepareFinalization(taskId, finalName, tempName, bytes, md5)
         override suspend fun progress(bytesDone: Long) {
             last = bytesDone
             onBytes(bytesDone)
@@ -259,6 +261,7 @@ fun FileTaskEntity.toJob(skipExisting: Boolean) = FileJob(
     taskId = id, fileId = fileId, resourceKey = resourceKey, dirSegments = dirSegments, plannedName = plannedName,
     expected = RemoteFingerprint(size, md5, modifiedTime), finalName = finalName, tempName = tempName, skipExisting = skipExisting,
     md5State = md5State,
+    verifiedBytes = verifiedBytes, verifiedMd5 = verifiedMd5,
 )
 
 fun DownloadItemEntity.toPick() = PickedItem(
@@ -267,13 +270,13 @@ fun DownloadItemEntity.toPick() = PickedItem(
         modifiedTime = modifiedTime, canDownload = canDownload,
         shortcut = targetId?.let { ShortcutTarget(it, targetMimeType, targetResourceKey) },
     ),
-    parentNames,
+    parentNames, parentIds,
 )
 
 fun PickedItem.toEntity(order: Int) = DownloadItemEntity(
     batchId = 0, nodeId = item.id, name = item.name, mimeType = item.mimeType, resourceKey = item.resourceKey,
     targetId = item.shortcut?.id, targetMimeType = item.shortcut?.mimeType, targetResourceKey = item.shortcut?.resourceKey,
     size = item.size, md5 = item.md5, modifiedTime = item.modifiedTime, canDownload = item.canDownload,
-    parentNames = parentNames, sortOrder = order,
+    parentNames = parentNames, sortOrder = order, parentIds = parentIds,
 )
 

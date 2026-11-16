@@ -23,6 +23,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 object SchedulerSelector {
     enum class Kind { UIDT, WORK_MANAGER }
@@ -53,6 +55,12 @@ class SelectingScheduler @Inject constructor(
     override fun unschedule(batchId: Long) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) UidtScheduler(context).cancel(batchId)
         workManager.unschedule(batchId)
+    }
+
+    override suspend fun isScheduled(batchId: Long): Boolean {
+        val uidtPending = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            context.getSystemService(JobScheduler::class.java).getPendingJob(UidtScheduler.jobId(batchId)) != null
+        return uidtPending || workManager.isScheduled(batchId)
     }
 
     companion object { private const val TAG = "Stashd/Sched" }
@@ -89,6 +97,9 @@ class UidtScheduler(private val context: Context) {
 /** Fallback (Android 8–13): a long-running worker in WorkManager's dataSync foreground service. */
 @Singleton
 class WorkManagerScheduler @Inject constructor(private val workManager: WorkManager) {
+    suspend fun isScheduled(batchId: Long): Boolean = withContext(Dispatchers.IO) {
+        workManager.getWorkInfosForUniqueWork(DownloadWorker.uniqueName(batchId)).get().any { !it.state.isFinished }
+    }
     fun schedule(batch: DownloadBatchEntity) {
         val request = OneTimeWorkRequestBuilder<DownloadWorker>()
             .setInputData(workDataOf(DownloadWorker.KEY_BATCH_ID to batch.id))

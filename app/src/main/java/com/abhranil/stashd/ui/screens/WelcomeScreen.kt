@@ -154,7 +154,7 @@ fun WelcomeScreen(onSignedIn: () -> Unit, vm: AuthViewModel = hiltViewModel()) {
         Text("on your phone.", style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(14.dp))
         Text(
-            "Paste a Google Drive folder link, pick what you need and pull it down. Every byte shows on the progress bar.",
+            "Browse a Google Drive folder, select files or subfolders, and save them to a folder on this phone.",
             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(28.dp))
@@ -162,14 +162,13 @@ fun WelcomeScreen(onSignedIn: () -> Unit, vm: AuthViewModel = hiltViewModel()) {
             Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("4.10 / 9.50 GB", style = MaterialTheme.typography.titleLarge)
-            GradientProgressBar(0.43f, height = 8.dp)
-            Text("18.6 MB/s · 4 min 45 s left", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Before your first download", style = MaterialTheme.typography.titleMedium)
+            Text("Choose where to save files. Allow notifications to see progress and pause or cancel without reopening the app.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         Spacer(Modifier.weight(1f))
         if (!vm.signInClient.isConfigured) {
-            PlaceholderNote("Demo mode: no Web client ID (SETUP.md). Continue opens sample data without signing in.")
+            PlaceholderNote("Sample data only. Files are generated locally; Google Drive is not connected.")
             Spacer(Modifier.height(12.dp))
         }
         (state as? WelcomeState.Message)?.let {

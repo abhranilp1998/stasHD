@@ -22,9 +22,11 @@ import javax.inject.Inject
 /**
  * Android 14+ main path: user-initiated data transfer job. Must post its notification (setNotification)
  * right away; we do it before any network I/O. onStopJob:
- *  - STOP_REASON_USER (stopped from Task Manager) → treated as Pause (state kept, no reschedule);
+ *  - STOP_REASON_USER, if delivered → treated as Pause (state kept, no reschedule);
  *  - anything else (network lost, quota, system pressure) → cancel the run and ask to be rescheduled;
  *    the runner puts the batch back to QUEUED and resumes from bytesDone next time.
+ * Task Manager Stop kills the process without this callback. Startup reconciliation makes an orphaned
+ * batch resumable without automatically restarting a download the user stopped.
  */
 // Only ever scheduled by UidtScheduler on API 34+; the SDK guards below are for lint and safety.
 @AndroidEntryPoint

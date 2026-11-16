@@ -10,10 +10,14 @@ import com.abhranil.stashd.download.storage.Destination
 import com.abhranil.stashd.download.storage.StorageError
 import com.abhranil.stashd.download.storage.isNoSpace
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.security.MessageDigest
 import kotlin.coroutines.coroutineContext
 
 /** Remote facts we expect the file to have; a resume is only valid while they still hold. */
@@ -39,8 +43,10 @@ data class FileJob(
     val finalName: String? = null,
     val tempName: String? = null,
     val skipExisting: Boolean = false,
-    /** Saved [ResumableMd5] state of the temp file's first `length` bytes (resume without re-hashing it all). */
+    /** Legacy saved hash state. Resume verifies the actual bytes on disk instead of trusting it. */
     val md5State: String? = null,
+    val verifiedBytes: Long? = null,
+    val verifiedMd5: String? = null,
 )
 
 sealed interface FileOutcome {
@@ -56,8 +62,10 @@ interface FileJobListener {
     suspend fun remoteChanged(now: RemoteFingerprint)
     /** Hot path (per 256 KB chunk): bytes in the temp file so far. The runner throttles persistence. */
     suspend fun progress(bytesDone: Long)
-    /** Every [FileDownloader.CHECKPOINT_BYTES]: the md5 state of everything written so far (null = reset). */
+    /** Clears legacy hash state when a partial is discarded or restarted. */
     suspend fun checkpoint(md5State: String?) {}
+    /** Durable rename intent, saved after verification and before touching the final filename. */
+    suspend fun finalizationReady(finalName: String, tempName: String, bytes: Long, md5: String) {}
 }
 
 class ChecksumMismatch(val expected: String, val actual: String) : IOException("Checksum mismatch (expected $expected, got $actual)")
@@ -93,6 +101,20 @@ class FileDownloader(
         }
 
         var expected = job.expected
+        // Rename and Room cannot share a transaction. Adopt only a file whose full digest matches the
+        // verification recorded before that rename; a same-size unrelated file is never accepted.
+        if (job.finalName != null && job.tempName != null && dir.size(tempName) == null) {
+            val completedBytes = job.verifiedBytes ?: expected.size
+            val completedMd5 = job.verifiedMd5 ?: expected.md5
+            if (completedBytes != null && completedMd5 != null && dir.size(finalName) == completedBytes) {
+                val digest = MessageDigest.getInstance("MD5")
+                val hashed = digestRange(dir, finalName, 0, completedBytes, digest)
+                if (hashed == completedBytes && digest.digest().toHex().equals(completedMd5, ignoreCase = true)) {
+                    val uri = dir.uri(finalName)
+                    if (uri != null) return@withContext FileOutcome.Done(finalName, uri, completedBytes, expected.md5 != null)
+                }
+            }
+        }
         var offset = dir.size(tempName) ?: 0L
         if (offset > 0) {
             val now = RemoteFingerprint.of(fresh(job))
@@ -110,7 +132,7 @@ class FileDownloader(
             if (free < need + spaceMarginBytes) throw StorageError.InsufficientSpace(need, free)
         }
 
-        var md5 = if (offset > 0) resumeDigest(dir, tempName, offset, job.md5State) else ResumableMd5()
+        var md5 = if (offset > 0) resumeDigest(dir, tempName, offset) else MessageDigest.getInstance("MD5")
         if (offset == 0L && job.md5State != null) listener.checkpoint(null)
 
         var restarts = 0
@@ -120,23 +142,24 @@ class FileDownloader(
                 drive.openDownload(job.fileId, job.resourceKey, offset)
             } catch (e: DriveError.RangeNotSatisfiable) {
                 if (expected.size != null && offset == expected.size) null // temp already complete
-                else { if (restarts++ > 0) throw e; dir.delete(tempName); offset = 0; md5 = ResumableMd5(); listener.checkpoint(null); continue }
+                else { if (restarts++ > 0) throw e; dir.delete(tempName); offset = 0; md5.reset(); listener.checkpoint(null); continue }
             } catch (e: DriveError.RangeMismatch) {
                 if (restarts++ > 0) throw e
-                dir.delete(tempName); offset = 0; md5 = ResumableMd5(); listener.checkpoint(null); continue
+                dir.delete(tempName); offset = 0; md5.reset(); listener.checkpoint(null); continue
             }
             if (download != null) download.use { d ->
-                if (d.offset == 0L && offset > 0) { offset = 0; md5 = ResumableMd5(); listener.checkpoint(null) } // server ignored Range: start over
+                if (d.offset == 0L && offset > 0) { offset = 0; md5.reset(); listener.checkpoint(null) } // server ignored Range: start over
                 offset = stream(d, dir, tempName, offset, md5, listener)
             }
             break
         }
 
-        if (expected.size != null && offset != expected.size) {
+        val writtenSize = dir.size(tempName)
+        if ((expected.size != null && offset != expected.size) || writtenSize != offset) {
             dir.delete(tempName)
-            throw ChecksumMismatch("${expected.size} bytes", "$offset bytes")
+            throw ChecksumMismatch("${expected.size ?: offset} bytes", "${writtenSize ?: 0} bytes on disk")
         }
-        val actual = md5.digestHex()
+        val actual = md5.digest().toHex()
         val verified = expected.md5 != null
         if (verified && !actual.equals(expected.md5, ignoreCase = true)) {
             dir.delete(tempName)
@@ -146,6 +169,8 @@ class FileDownloader(
         if (dir.size(finalName) != null) { // something appeared under our name meanwhile
             finalName = NameSanitizer.dedupe(finalName, dir.list().keys)
         }
+        listener.finalizationReady(finalName, tempName, offset, actual)
+        coroutineContext.ensureActive()
         val uri = dir.rename(tempName, finalName)
         FileOutcome.Done(finalName, uri, offset, verified)
     }
@@ -157,9 +182,18 @@ class FileDownloader(
         return meta
     }
 
-    private suspend fun stream(d: DriveDownload, dir: DestDir, temp: String, start: Long, md5: ResumableMd5, listener: FileJobListener): Long {
+    private suspend fun stream(d: DriveDownload, dir: DestDir, temp: String, start: Long, md5: MessageDigest, listener: FileJobListener): Long = coroutineScope {
+        // await is cancellable even while the IO child is blocked in read. Cancel the underlying call
+        // before this scope waits for the child, so Pause/Cancel can finish and safely touch its files.
+        val transfer = async(io) {
+            try { copyStream(d, dir, temp, start, md5, listener) }
+            catch (e: Exception) { coroutineContext.ensureActive(); throw e }
+        }
+        try { transfer.await() } catch (e: CancellationException) { d.cancel(); throw e }
+    }
+
+    private suspend fun copyStream(d: DriveDownload, dir: DestDir, temp: String, start: Long, md5: MessageDigest, listener: FileJobListener): Long {
         var offset = start
-        var nextCheckpoint = (start / CHECKPOINT_BYTES + 1) * CHECKPOINT_BYTES
         val buf = ByteArray(BUFFER)
         val out = try { dir.openWrite(temp, append = start > 0) } catch (e: IOException) { throw storageOr(e) }
         out.use {
@@ -171,11 +205,6 @@ class FileDownloader(
                 md5.update(buf, 0, n)
                 offset += n
                 listener.progress(offset)
-                if (offset >= nextCheckpoint) {
-                    try { out.flush() } catch (e: IOException) { throw storageOr(e) }
-                    listener.checkpoint(md5.saveState())
-                    nextCheckpoint += CHECKPOINT_BYTES
-                }
             }
             try { out.flush() } catch (e: IOException) { throw storageOr(e) }
         }
@@ -186,15 +215,16 @@ class FileDownloader(
         if (e !is StorageError && e.isNoSpace()) StorageError.InsufficientSpace(0, null, e) else e
 
     /**
-     * The md5 of the temp file's first [length] bytes. With a saved checkpoint at or below [length], only the
-     * tail after it is read; otherwise (no/invalid/too-new checkpoint) the whole prefix is hashed.
-     * Any mismatch is still caught by the final check against Drive's md5.
+     * Hash the bytes actually on disk. A saved hash midstate cannot detect a changed/corrupt prefix;
+     * trusting it could report a valid Drive checksum for a corrupt file in a shared SAF directory.
      */
-    internal fun resumeDigest(dir: DestDir, temp: String, length: Long, saved: String?): ResumableMd5 {
-        val restored = saved?.let(ResumableMd5::restore)?.takeIf { it.length <= length }
-        val md5 = restored ?: ResumableMd5()
-        lastResumeHashedBytes = length - md5.length
-        digestRange(dir, temp, md5.length, length - md5.length, md5)
+    internal suspend fun resumeDigest(dir: DestDir, temp: String, length: Long): MessageDigest {
+        val md5 = MessageDigest.getInstance("MD5")
+        lastResumeHashedBytes = digestRange(dir, temp, 0, length, md5)
+        if (lastResumeHashedBytes != length) {
+            dir.delete(temp)
+            throw ChecksumMismatch("$length partial bytes", "$lastResumeHashedBytes partial bytes")
+        }
         return md5
     }
 
@@ -202,29 +232,30 @@ class FileDownloader(
     @Volatile var lastResumeHashedBytes: Long = 0
         private set
 
-    private fun digestRange(dir: DestDir, temp: String, from: Long, length: Long, md5: ResumableMd5) {
-        if (length <= 0) return
-        dir.openRead(temp).use { input ->
+    private suspend fun digestRange(dir: DestDir, temp: String, from: Long, length: Long, md5: MessageDigest): Long {
+        if (length <= 0) return 0
+        return dir.openRead(temp).use { input ->
             var skip = from
             while (skip > 0) {
+                coroutineContext.ensureActive()
                 val s = input.skip(skip)
-                if (s <= 0) { if (input.read() == -1) return else skip-- } else skip -= s
+                if (s <= 0) { if (input.read() == -1) return@use 0L else skip-- } else skip -= s
             }
             val buf = ByteArray(BUFFER)
             var left = length
             while (left > 0) {
+                coroutineContext.ensureActive()
                 val n = input.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
                 if (n == -1) break
                 md5.update(buf, 0, n); left -= n
             }
+            length - left
         }
     }
 
     companion object {
         const val TEMP_SUFFIX = ".stashdpart"
         const val BUFFER = 256 * 1024
-        /** Save the md5 state about every 8 MB (the runner persists it with the resume offset). */
-        const val CHECKPOINT_BYTES = 8L * 1024 * 1024
         /** Keep this much free beyond the file so the phone doesn't hit zero. */
         const val SPACE_MARGIN = 200L * 1024 * 1024
         fun ByteArray.toHex() = joinToString("") { "%02x".format(it) }

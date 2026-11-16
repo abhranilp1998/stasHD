@@ -94,7 +94,8 @@ class DownloadNotifier @Inject constructor(@param:ApplicationContext private val
         .setSilent(true)
         .setContentIntent(
             PendingIntent.getActivity(
-                context, 0, Intent(context, MainActivity::class.java),
+                context, 0, Intent(context, MainActivity::class.java).setAction(ACTION_OPEN_DOWNLOADS)
+                    .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             ),
         )
@@ -125,6 +126,7 @@ class DownloadNotifier @Inject constructor(@param:ApplicationContext private val
         const val NOTIFICATION_ID = 4101
         const val RESULT_ID = 4102
         const val ACTION_RESUME_IN_APP = "com.abhranil.stashd.action.RESUME_IN_APP"
+        const val ACTION_OPEN_DOWNLOADS = "com.abhranil.stashd.action.OPEN_DOWNLOADS"
         private const val RESUME_REQUEST = 4103
 
         fun formatBytes(b: Long): String {

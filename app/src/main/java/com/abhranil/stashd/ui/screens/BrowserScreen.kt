@@ -326,7 +326,7 @@ private fun DestinationSheet(vm: BrowserViewModel, summary: String, count: Int, 
         }
     }
     Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Download $count items", style = MaterialTheme.typography.titleLarge)
+        Text("Download $count ${if (count == 1) "item" else "items"}", style = MaterialTheme.typography.titleLarge)
         Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Overline("Save to")
         Row(
@@ -341,7 +341,7 @@ private fun DestinationSheet(vm: BrowserViewModel, summary: String, count: Int, 
         }
         Overline("Options")
         OptionRow("Keep folder structure", "Each album lands in its own folder", settings.keepStructure, vm::setKeepStructure)
-        OptionRow("Wi-Fi only", "Pause on mobile data, resume on Wi-Fi", settings.wifiOnly, vm::setWifiOnly)
+        OptionRow("Unmetered networks only", "Wait when the connection is marked as metered", settings.wifiOnly, vm::setWifiOnly)
         OptionRow("Skip files already on phone", "Matched by name and size", settings.skipExisting, vm::setSkipExisting)
         startError?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
