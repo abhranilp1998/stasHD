@@ -70,7 +70,7 @@ class DownloadNotifier @Inject constructor(@param:ApplicationContext private val
         post(
             RESULT_ID,
             builder().setContentTitle(title).setContentText(why).setSubText(message?.take(80))
-                .addAction(0, context.getString(R.string.action_resume), action(DownloadActionReceiver.ACTION_RESUME, batchId))
+                .addAction(0, context.getString(R.string.action_resume), resumeInApp(batchId))
                 .addAction(0, context.getString(R.string.action_cancel), action(DownloadActionReceiver.ACTION_CANCEL, batchId))
                 .build(),
         )
@@ -99,6 +99,17 @@ class DownloadNotifier @Inject constructor(@param:ApplicationContext private val
             ),
         )
 
+    /**
+     * Resume opens Stashd and resumes from there: a user-initiated data transfer job may only be scheduled while
+     * the app is visible, and a broadcast from a notification action doesn't count (it'd fail with RESULT_FAILURE).
+     */
+    private fun resumeInApp(batchId: Long) = PendingIntent.getActivity(
+        context, RESUME_REQUEST,
+        Intent(context, MainActivity::class.java).setAction(ACTION_RESUME_IN_APP).putExtra(DownloadActionReceiver.EXTRA_BATCH_ID, batchId)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
     private fun action(action: String, batchId: Long) = PendingIntent.getBroadcast(
         context, action.hashCode(),
         Intent(context, DownloadActionReceiver::class.java).setAction(action).putExtra(DownloadActionReceiver.EXTRA_BATCH_ID, batchId),
@@ -113,6 +124,8 @@ class DownloadNotifier @Inject constructor(@param:ApplicationContext private val
         const val CHANNEL_ID = "downloads"
         const val NOTIFICATION_ID = 4101
         const val RESULT_ID = 4102
+        const val ACTION_RESUME_IN_APP = "com.abhranil.stashd.action.RESUME_IN_APP"
+        private const val RESUME_REQUEST = 4103
 
         fun formatBytes(b: Long): String {
             val units = arrayOf("B", "KB", "MB", "GB", "TB")
