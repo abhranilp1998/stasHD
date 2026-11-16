@@ -49,6 +49,9 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
+    // Exported Room schemas as debug-only assets: Robolectric unit tests read the app variant's merged assets,
+    // so this is how MigrationTestHelper finds old versions. Not in the release APK.
+    sourceSets.getByName("debug").assets.srcDir("$projectDir/schemas")
     lint {
         warningsAsErrors = false
         abortOnError = true
@@ -112,4 +115,5 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.androidx.room.testing)
 }

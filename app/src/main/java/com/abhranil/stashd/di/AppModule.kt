@@ -15,6 +15,7 @@ import com.abhranil.stashd.data.db.DownloadDao
 import com.abhranil.stashd.data.db.DriveNodeDao
 import com.abhranil.stashd.data.db.DriveRootDao
 import com.abhranil.stashd.data.db.StashdDatabase
+import com.abhranil.stashd.data.db.StashdMigrations
 import com.abhranil.stashd.data.drive.DriveRepository
 import com.abhranil.stashd.data.drive.DriveApiConfig
 import com.abhranil.stashd.data.drive.DriveCache
@@ -41,8 +42,10 @@ object AppModule {
     @Provides @Singleton
     fun database(@ApplicationContext context: Context): StashdDatabase =
         Room.databaseBuilder(context, StashdDatabase::class.java, "stashd.db")
-            // Sideloaded hobby build with no shipped data yet; the cache is rebuildable. Add real Migrations before M3.
-            .fallbackToDestructiveMigration(dropAllTables = true)
+            // Real migrations from v4 (the first schema with download state). v1–v3 only existed in pre-M2 dev
+            // builds whose data was a rebuildable cache, so those (and only those) may still be wiped.
+            .addMigrations(*StashdMigrations.ALL)
+            .fallbackToDestructiveMigrationFrom(true, 1, 2, 3)
             .build()
 
     @Provides fun driveRootDao(db: StashdDatabase): DriveRootDao = db.driveRootDao()

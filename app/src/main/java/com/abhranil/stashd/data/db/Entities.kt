@@ -171,6 +171,8 @@ data class FileTaskEntity(
     val finalUri: String? = null,
     val startedAt: Long? = null,
     val finishedAt: Long? = null,
+    /** v5: ResumableMd5 checkpoint of the temp file's prefix, so a resume needn't re-hash it all. */
+    val md5State: String? = null,
 )
 
 /** Totals for the progress UI / notification. */
