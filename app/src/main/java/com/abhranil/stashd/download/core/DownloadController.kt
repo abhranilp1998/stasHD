@@ -111,6 +111,38 @@ class DownloadController(
         scheduler.schedule(dao.batchOnce(batchId)!!)
     }
 
+    /** History: retry ONE failed file of a finished batch (its partial is kept, so it resumes). */
+    suspend fun retryFile(taskId: Long) {
+        val t = dao.task(taskId) ?: return
+        val b = dao.batchOnce(t.batchId) ?: return
+        if (b.state != BatchState.COMPLETED_WITH_ERRORS) return
+        dao.activeBatchId()?.let { throw ActiveBatchExists(it) }
+        if (dao.requeueOneFailed(taskId) == 0) return
+        dao.setBatchState(b.id, BatchState.QUEUED, null, null)
+        scheduler.schedule(dao.batchOnce(b.id)!!)
+    }
+
+    /**
+     * History: "Download again" for a cancelled or failed batch. Same picks, same destination, as a NEW batch
+     * with skip-existing on, so files that already finished aren't downloaded twice. Returns the new batch id.
+     */
+    suspend fun restart(batchId: Long): Long? {
+        val b = dao.batchOnce(batchId) ?: return null
+        if (b.state != BatchState.CANCELLED && b.state != BatchState.FAILED) return null
+        val items = dao.items(batchId)
+        if (items.isEmpty()) return null
+        val id = dao.createBatch(
+            b.copy(id = 0, state = BatchState.EXPANDING, pauseReason = null, message = null, skipExisting = true,
+                totalBytes = 0, totalFiles = 0, skippedFiles = 0, duplicatesRemoved = 0, createdAt = clock(), startedAt = null, finishedAt = null),
+            items.map { it.copy(id = 0, batchId = 0) },
+        )
+        scheduler.schedule(dao.batchOnce(id)!!)
+        return id
+    }
+
+    /** History: remove a finished batch's record (files on the phone are not touched). */
+    suspend fun forget(batchId: Long) { dao.deleteFinishedBatch(batchId) }
+
     private suspend fun deletePartials(b: DownloadBatchEntity) {
         val dest = runCatching { destinations.open(b.destTreeUri) }.getOrNull() ?: return
         for (t in dao.tasksWithPartials(b.id)) {

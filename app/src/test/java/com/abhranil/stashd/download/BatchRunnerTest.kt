@@ -30,6 +30,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
@@ -345,5 +346,57 @@ class BatchRunnerTest {
         assertTrue(file("Disc 1", "02 Blank Space.flac").exists())
         controller.cancel(id) // no-op on finished
         assertNull(dao.activeBatchId())
+    }
+
+    // --- History (M3) ---
+
+    @Test fun historyRetriesOneFailedFileAndCountsOutcomes() = runTest {
+        drive.openFailures["a1"] = ArrayDeque(List(10) { DriveError.Server(503) })
+        drive.openFailures["a2"] = ArrayDeque(List(10) { DriveError.Server(503) })
+        val id = createWholeRoot()
+        assertEquals(RunResult.Finished(BatchState.COMPLETED_WITH_ERRORS), runner().run(id))
+        var sum = dao.historySummaries().first().single()
+        assertEquals(2, sum.failedFiles)
+        assertEquals(1, sum.doneFiles) // b1
+        assertEquals(b1.size.toLong(), sum.doneBytes)
+        assertEquals(2, dao.problems(id).first().count { it.state == TaskState.FAILED })
+
+        drive.openFailures.clear()
+        drive.opens.clear()
+        controller.retryFile(dao.tasks(id).single { it.fileId == "a2" }.id)
+        assertEquals(BatchState.QUEUED, dao.batchOnce(id)!!.state)
+        assertEquals(RunResult.Finished(BatchState.COMPLETED_WITH_ERRORS), runner().run(id)) // a1 still failed
+        assertEquals(listOf("a2" to 0L), drive.opens)
+        sum = dao.historySummaries().first().single()
+        assertEquals(1, sum.failedFiles)
+        assertEquals(2, sum.doneFiles)
+    }
+
+    @Test fun retryFileRespectsTheOneActiveBatchRule() = runTest {
+        drive.openFailures["a2"] = ArrayDeque(List(10) { DriveError.Server(503) })
+        val id = createWholeRoot()
+        runner().run(id)
+        val other = controller.create(NewBatch("R", "1989 TV", listOf(PickedItem(drive.items["b1"]!!, emptyList())), "dest", true, false, false))
+        try { controller.retryFile(dao.tasks(id).single { it.fileId == "a2" }.id); fail("allowed while another batch is active") }
+        catch (e: ActiveBatchExists) { assertEquals(other, e.batchId) }
+        assertEquals(TaskState.FAILED, dao.tasks(id).single { it.fileId == "a2" }.state)
+    }
+
+    @Test fun downloadAgainCopiesPicksIntoANewSkipExistingBatch() = runTest {
+        val id = createWholeRoot()
+        controller.cancel(id)
+        assertEquals(BatchState.CANCELLED, dao.batchOnce(id)!!.state)
+        val again = controller.restart(id)!!
+        val nb = dao.batchOnce(again)!!
+        assertTrue(nb.skipExisting)
+        assertEquals("dest", nb.destTreeUri)
+        assertEquals(dao.items(id).map { it.nodeId }, dao.items(again).map { it.nodeId })
+        assertEquals(RunResult.Finished(BatchState.COMPLETED), runner().run(again))
+        assertArrayEquals(a1, file("1989 TV", "Disc 1", "01 Welcome.flac").readBytes())
+        assertNull(controller.restart(again)) // only for cancelled/failed batches
+
+        controller.forget(id)
+        assertNull(dao.batchOnce(id))
+        assertEquals(listOf(again), dao.historySummaries().first().map { it.batch.id })
     }
 }

@@ -175,6 +175,16 @@ data class FileTaskEntity(
     val md5State: String? = null,
 )
 
+/** One History card: the batch plus its per-file outcome counts. */
+data class BatchSummary(
+    @androidx.room.Embedded val batch: DownloadBatchEntity,
+    val doneFiles: Int,
+    val failedFiles: Int,
+    val skippedTasks: Int,
+    val doneBytes: Long,
+    val taskCount: Int,
+)
+
 /** Totals for the progress UI / notification. */
 data class BatchTotals(
     val totalBytes: Long,

@@ -106,6 +106,24 @@ interface DownloadDao {
     @Query("SELECT * FROM download_batch WHERE state IN ('EXPANDING','QUEUED','RUNNING','PAUSED') ORDER BY id LIMIT 1")
     fun activeBatch(): Flow<DownloadBatchEntity?>
     @Query("SELECT * FROM download_batch ORDER BY createdAt DESC") fun history(): Flow<List<DownloadBatchEntity>>
+    @Query(
+        """
+        SELECT b.*,
+          (SELECT COUNT(*) FROM file_task t WHERE t.batchId = b.id AND t.state = 'DONE') AS doneFiles,
+          (SELECT COUNT(*) FROM file_task t WHERE t.batchId = b.id AND t.state = 'FAILED') AS failedFiles,
+          (SELECT COUNT(*) FROM file_task t WHERE t.batchId = b.id AND t.state = 'SKIPPED') AS skippedTasks,
+          (SELECT COALESCE(SUM(t.bytesDone), 0) FROM file_task t WHERE t.batchId = b.id AND t.state = 'DONE') AS doneBytes,
+          (SELECT COUNT(*) FROM file_task t WHERE t.batchId = b.id) AS taskCount
+        FROM download_batch b ORDER BY b.createdAt DESC, b.id DESC LIMIT :limit
+        """
+    )
+    fun historySummaries(limit: Int = 200): Flow<List<BatchSummary>>
+    @Query("SELECT * FROM file_task WHERE batchId = :batchId AND state IN ('FAILED','SKIPPED') ORDER BY state, id")
+    fun problems(batchId: Long): Flow<List<FileTaskEntity>>
+    @Query("UPDATE file_task SET state = 'QUEUED', attempts = 0, errorReason = NULL, errorMessage = NULL, finishedAt = NULL WHERE id = :taskId AND state = 'FAILED'")
+    suspend fun requeueOneFailed(taskId: Long): Int
+    @Query("DELETE FROM download_batch WHERE id = :batchId AND state NOT IN ('EXPANDING','QUEUED','RUNNING','PAUSED')")
+    suspend fun deleteFinishedBatch(batchId: Long): Int
     @Query("SELECT * FROM download_item WHERE batchId = :batchId ORDER BY sortOrder") suspend fun items(batchId: Long): List<DownloadItemEntity>
 
     @Query("SELECT * FROM file_task WHERE batchId = :batchId AND state IN ('QUEUED','RUNNING') ORDER BY id")

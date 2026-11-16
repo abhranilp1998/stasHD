@@ -54,6 +54,6 @@ fun StashdNavHost() {
             )
         }
         composable<NotificationPreviewRoute> { NotificationPreviewScreen(onBack = { nav.popBackStack() }) }
-        composable<HistoryRoute> { HistoryScreen(onBack = { nav.popBackStack() }) }
+        composable<HistoryRoute> { HistoryScreen(onBack = { nav.popBackStack() }, onOpenDownloads = { nav.navigate(DownloadsRoute) }) }
     }
 }
